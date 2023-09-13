@@ -1,4 +1,5 @@
 use std::thread;
+use std::thread::sleep;
 use std::net::{IpAddr, UdpSocket};
 use std::time::Duration;
 
@@ -21,12 +22,23 @@ impl Tello {
     }
 
     pub fn listen_state(&self) {
-        let addr = (self.local_ip, TELLO_STATE_PORT);
+        let local_ip = self.local_ip;
+        let timeout_dur = self.timeout_dur;
+        let addr = (local_ip, TELLO_STATE_PORT);
         thread::spawn(move || {
             let socket = UdpSocket::bind(addr).expect("Failed to bind to socket");
+    
+            if let Err(err) = socket.set_broadcast(true) {
+                eprintln!("Failed to set broadcast: {}", err);
+            }
+    
+            if let Err(err) = socket.set_read_timeout(Some(timeout_dur)) {
+                eprintln!("Failed to set read timeout: {}", err);
+            }
+    
             loop {
                 let mut buffer = [0u8; 1024];
-
+    
                 match socket.recv_from(&mut buffer) {
                     Ok((size, source)) => {
                         // 受信したデータを表示
@@ -38,12 +50,13 @@ impl Tello {
                         eprintln!("Error receiving data: {}", err);
                     }
                 }
+                sleep(Duration::from_secs(1));
             }
         });
     }
 
     pub fn send_cmd(&self, cmd: &str, wait: bool) -> bool {
-        if let Ok(sock) = UdpSocket::bind((self.local_ip, 0)) {
+        if let Ok(sock) = UdpSocket::bind((self.local_ip, 8889)) {
             if let Err(err) = sock.set_broadcast(true) {
                 eprintln!("Failed to set broadcast: {}", err);
                 return false;

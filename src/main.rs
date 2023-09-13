@@ -31,7 +31,7 @@ fn main() {
                 break;
             }
             Ok(_) => {
-                let result = tello.send_cmd(&input.lines().collect::<String>(), false);
+                let result = tello.send_cmd(&input.lines().collect::<String>(), true);
                 if !result {
                     eprintln!("Failed to send command: {}", &input);
                 }
