@@ -1,13 +1,11 @@
-use std::error::Error;
 use std::io::{self, BufRead};
 use tello_autopilot::tello::Tello;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+fn main() {
     let stdin = io::stdin();
     let mut reader = stdin.lock();
 
-    let local_ip = "192.168.10.2"
+    let local_ip = "0.0.0.0"
         .parse()
         .expect("Failed to parse local ip address");
     let tello_ip = "192.168.10.1"
@@ -15,16 +13,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .expect("Failed to parse tello ip address");
 
     // 接続チェック
-    let result = tokio::task::spawn_blocking(move || {
-        let tello = Tello::new(3, local_ip, tello_ip);
-        tello.send_cmd("command", true)
-    })
-    .await
-    .expect("failed to spawn blocking task");
+    let tello = Tello::new(3, local_ip, tello_ip);
+    let result = tello.send_cmd("command", true);
 
     if !result {
         println!("Telloとの接続を確認してください.");
     }
+
+    tello.listen_state();
 
     // 入力ループ
     loop {
@@ -35,9 +31,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 break;
             }
             Ok(_) => {
-                // ここで tello を再度所有権移動
-                let tello = Tello::new(3, local_ip, tello_ip);
-                let _ = tello.send_cmd(&input.lines().collect::<String>(), false);
+                let result = tello.send_cmd(&input.lines().collect::<String>(), false);
+                if !result {
+                    eprintln!("Failed to send command: {}", &input);
+                }
             }
             Err(e) => {
                 eprintln!("Error: {}", e);
@@ -45,6 +42,4 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-
-    Ok(())
 }
