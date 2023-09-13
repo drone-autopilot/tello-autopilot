@@ -1,4 +1,4 @@
-use std::{thread, io, process::exit};
+use std::{io, process::exit, thread};
 use tello_autopilot::tello::Tello;
 
 fn main() {
@@ -15,12 +15,12 @@ fn main() {
     tello.listen_state();
 
     // 入力ループ
-    let handle = thread::spawn(move || {
-        loop {
-            let mut str = String::new();
-            io::stdin().read_line(&mut str).expect("failed to read line");
-            tello.send_cmd(&str.lines().collect::<String>(), false);
-        }
+    let handle = thread::spawn(move || loop {
+        let mut str = String::new();
+        io::stdin()
+            .read_line(&mut str)
+            .expect("failed to read line");
+        tello.send_cmd(&str.lines().collect::<String>(), false);
     });
 
     handle.join().unwrap();
