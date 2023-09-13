@@ -1,56 +1,67 @@
-use std::net::UdpSocket;
+use std::error::Error;
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::str;
 use std::time::Duration;
-use std::error::Error;
 use tokio::net::UdpSocket as Tokio;
 
+const TELLO_CMD_PORT: u16 = 8889;
+const LOCAL_STATE_PORT: u16 = 8890;
+const LOCAL_VIDEO_STREAM_PORT: u16 = 11111;
+
+pub struct Tello {
+    timeout_dur: Duration,
+    local_ip: IpAddr,
+    tello_ip: IpAddr,
+}
+
 impl Tello {
-    pub fn new(timeout: u64, local_ip: impl Into<String>, tello_ip: impl Into<String>) -> Tello {
-        Tello {
-            timeout,
-            local_ip: local_ip.into(),
-            tello_ip: tello_ip.into(),
+    pub fn new(timeout_secs: u64, local_ip: IpAddr, tello_ip: IpAddr) -> Self {
+        Self {
+            timeout_dur: Duration::from_secs(timeout_secs),
+            local_ip,
+            tello_ip,
         }
     }
 
     pub async fn listen_state(&self) -> Result<(), Box<dyn Error>> {
-        let addr = String::new() + &self.local_ip + ":8890";
+        let addr = SocketAddr::new(self.local_ip, LOCAL_STATE_PORT);
         let socket = Tokio::bind(addr).await?;
 
         let mut buff = [0; 1024];
-        loop{
+        loop {
             match socket.recv_from(&mut buff).await {
-                Ok((recv_size, _sec)) => {
-                    match String::from_utf8(buff[..recv_size].to_vec()) {
-                        Ok(v) => println!("{}", v),
-                        Err(v) => println!("failed to convert to string from u8 array: {}", v),
-                    }
-                }
+                Ok((recv_size, _sec)) => match String::from_utf8(buff[..recv_size].to_vec()) {
+                    Ok(v) => println!("{}", v),
+                    Err(v) => println!("failed to convert to string from u8 array: {}", v),
+                },
                 Err(_) => println!("failed to receive message"),
             }
         }
     }
 
     pub fn send_cmd(&self, cmd: &str, wait: bool) -> bool {
-        if let Ok(sock) = UdpSocket::bind(format!("{}:8889", self.local_ip)) {
+        if let Ok(sock) = UdpSocket::bind(SocketAddr::new(self.local_ip, TELLO_CMD_PORT)) {
             if let Err(err) = sock.set_broadcast(true) {
                 eprintln!("Failed to set broadcast: {}", err);
                 drop(sock);
                 return false;
             }
-    
-            if let Err(err) = sock.set_read_timeout(Some(Duration::from_secs(self.timeout))) {
+
+            if let Err(err) = sock.set_read_timeout(Some(self.timeout_dur)) {
                 eprintln!("Failed to set read timeout: {}", err);
                 drop(sock);
                 return false;
             }
-    
-            if let Err(err) = sock.send_to(cmd.as_bytes(), format!("{}:8889", self.tello_ip)) {
+
+            if let Err(err) = sock.send_to(
+                cmd.as_bytes(),
+                SocketAddr::new(self.tello_ip, TELLO_CMD_PORT),
+            ) {
                 eprintln!("Failed to send command: {}", err);
                 drop(sock);
                 return false;
             }
-    
+
             if wait {
                 println!("Sending command: {} to {}", cmd, &self.tello_ip);
                 let mut buff = [0; 1024];
@@ -78,11 +89,4 @@ impl Tello {
             return false;
         }
     }
-    
-}
-
-pub struct Tello {
-    pub timeout: u64,
-    pub local_ip: String,
-    pub tello_ip: String,
 }
