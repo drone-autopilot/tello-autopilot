@@ -13,7 +13,7 @@ fn main() {
         .expect("Failed to parse tello ip address");
 
     // 接続チェック
-    let tello = Tello::new(3, local_ip, tello_ip);
+    let tello = Tello::new(300, local_ip, tello_ip);
     let result = tello.send_cmd("command", true);
 
     if !result {

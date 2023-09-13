@@ -13,9 +13,9 @@ pub struct Tello {
 }
 
 impl Tello {
-    pub fn new(timeout_secs: u64, local_ip: IpAddr, tello_ip: IpAddr) -> Self {
+    pub fn new(timeout_milli: u64, local_ip: IpAddr, tello_ip: IpAddr) -> Self {
         Self {
-            timeout_dur: Duration::from_secs(timeout_secs),
+            timeout_dur: Duration::from_millis(timeout_milli),
             local_ip,
             tello_ip,
         }
