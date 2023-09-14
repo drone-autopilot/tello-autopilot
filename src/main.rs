@@ -1,7 +1,19 @@
-use std::io::{self, BufRead};
+use env_logger;
+use log::error;
+use std::{
+    env,
+    io::{self, BufRead},
+};
 use tello_autopilot::tello::Tello;
 
 fn main() {
+    // env_logger setup
+    // debug!, info!, warn!, error!
+
+    // show info!, warn!, error! log
+    env::set_var("RUST_LOG", "info");
+    env_logger::init();
+
     let stdin = io::stdin();
     let mut reader = stdin.lock();
 
@@ -14,8 +26,8 @@ fn main() {
     let tello = Tello::new(300, local_ip, tello_ip);
 
     if let Err(err) = tello.send_cmd("command", true) {
-        eprintln!("Error occured in send_cmd: {:?}", err);
-        eprintln!("Do check the connection with tello");
+        error!("Error occured in send_cmd: {:?}", err);
+        error!("Do check the connection with tello");
         //return;
     }
 
@@ -29,7 +41,7 @@ fn main() {
             .expect("Failed to read line from stdin");
 
         if let Err(err) = tello.send_cmd(&input.lines().collect::<String>(), true) {
-            eprintln!("Error occured in send_cmd: {:?}", err);
+            error!("Error occured in send_cmd: {:?}", err);
         }
 
         input.clear();

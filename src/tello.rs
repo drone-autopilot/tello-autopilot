@@ -1,3 +1,4 @@
+use log::{error, info};
 use std::io::Error;
 use std::net::{IpAddr, UdpSocket};
 use std::str;
@@ -31,21 +32,21 @@ impl Tello {
             let socket = UdpSocket::bind(addr).expect("Failed to bind to socket");
 
             if let Err(err) = socket.set_broadcast(true) {
-                eprintln!("Failed to set broadcast: {}", err);
+                error!("Failed to set broadcast: {}", err);
             }
 
             if let Err(err) = socket.set_read_timeout(Some(timeout_dur)) {
-                eprintln!("Failed to set read timeout: {}", err);
+                error!("Failed to set read timeout: {}", err);
             }
 
             let mut buf = [0; 1024];
 
             loop {
-                println!("Waiting receive...");
+                info!("Waiting receive...");
                 let mut buf = [0; 1024];
                 match socket.recv_from(&mut buf) {
                     Ok((size, s_addr)) => {
-                        println!(
+                        info!(
                             "Received {} bytes from {}: {:?}",
                             size,
                             s_addr,
@@ -53,7 +54,7 @@ impl Tello {
                         );
                     }
                     Err(err) => {
-                        eprintln!("Failed to receive data: {:?}", err);
+                        error!("Failed to receive data: {:?}", err);
                     }
                 }
 
@@ -80,20 +81,20 @@ impl Tello {
             return Err(err);
         }
 
-        println!("Command sent: {} to {}", cmd, &self.tello_ip);
+        info!("Command sent: {} to {}", cmd, &self.tello_ip);
 
         if !wait {
             return Ok(());
         }
 
-        println!("Waiting receive...");
+        info!("Waiting receive...");
         let mut buf = [0; 1024];
         let (size, s_addr) = match socket.recv_from(&mut buf) {
             Ok((size, s_addr)) => (size, s_addr),
             Err(err) => return Err(err),
         };
 
-        println!(
+        info!(
             "Received {} bytes from {}: {:?}",
             size,
             s_addr,
