@@ -4,7 +4,7 @@ use std::{
     env,
     io::{self, BufRead},
 };
-use tello_autopilot::tello::Tello;
+use tello_autopilot::tello::{cmd::Command, Tello};
 
 fn main() {
     // env_logger setup
@@ -22,13 +22,17 @@ fn main() {
         .parse()
         .expect("Failed to parse tello ip address");
 
-    // 接続チェック
+    // command test
+    let cmd = Command::Up(512);
+    println!("{:?} -> {}", &cmd, &cmd);
+
     let tello = Tello::new(300, local_ip, tello_ip);
 
+    // 接続チェック
     if let Err(err) = tello.send_cmd("command", true) {
         error!("Error occured in send_cmd: {:?}", err);
         error!("Do check the connection with tello");
-        //return;
+        return;
     }
 
     tello.listen_state();
