@@ -1,6 +1,8 @@
+use std::io::Error;
+use std::net::{IpAddr, UdpSocket};
+use std::str;
 use std::thread;
 use std::thread::sleep;
-use std::net::{IpAddr, UdpSocket};
 use std::time::Duration;
 
 const TELLO_CMD_PORT: u16 = 8889;
@@ -13,9 +15,9 @@ pub struct Tello {
 }
 
 impl Tello {
-    pub fn new(timeout_milli: u64, local_ip: IpAddr, tello_ip: IpAddr) -> Self {
+    pub fn new(timeout_millis: u64, local_ip: IpAddr, tello_ip: IpAddr) -> Self {
         Self {
-            timeout_dur: Duration::from_millis(timeout_milli),
+            timeout_dur: Duration::from_millis(timeout_millis),
             local_ip,
             tello_ip,
         }
@@ -27,73 +29,77 @@ impl Tello {
         let addr = (local_ip, TELLO_STATE_PORT);
         thread::spawn(move || {
             let socket = UdpSocket::bind(addr).expect("Failed to bind to socket");
-    
+
             if let Err(err) = socket.set_broadcast(true) {
                 eprintln!("Failed to set broadcast: {}", err);
             }
-    
+
             if let Err(err) = socket.set_read_timeout(Some(timeout_dur)) {
                 eprintln!("Failed to set read timeout: {}", err);
             }
-    
+
+            let mut buf = [0; 1024];
+
             loop {
-                let mut buffer = [0u8; 1024];
-    
-                match socket.recv_from(&mut buffer) {
-                    Ok((size, source)) => {
-                        // 受信したデータを表示
-                        let data = &buffer[..size];
-                        let data_str = String::from_utf8_lossy(data);
-                        println!("Received {} bytes from {}: {}", size, source, data_str);
+                println!("Waiting receive...");
+                let mut buf = [0; 1024];
+                match socket.recv_from(&mut buf) {
+                    Ok((size, s_addr)) => {
+                        println!(
+                            "Received {} bytes from {}: {:?}",
+                            size,
+                            s_addr,
+                            str::from_utf8(&buf[..size])
+                        );
                     }
                     Err(err) => {
-                        eprintln!("Error receiving data: {}", err);
+                        eprintln!("Failed to receive data: {:?}", err);
                     }
                 }
+
                 sleep(Duration::from_secs(1));
             }
         });
     }
 
-    pub fn send_cmd(&self, cmd: &str, wait: bool) -> bool {
-        if let Ok(sock) = UdpSocket::bind((self.local_ip, 8889)) {
-            if let Err(err) = sock.set_broadcast(true) {
-                eprintln!("Failed to set broadcast: {}", err);
-                return false;
-            }
+    pub fn send_cmd(&self, cmd: &str, wait: bool) -> Result<(), Error> {
+        let socket = match UdpSocket::bind((self.local_ip, TELLO_CMD_PORT)) {
+            Ok(s) => s,
+            Err(err) => return Err(err),
+        };
 
-            if let Err(err) = sock.set_read_timeout(Some(self.timeout_dur)) {
-                eprintln!("Failed to set read timeout: {}", err);
-                return false;
-            }
-
-            if let Err(err) = sock.send_to(cmd.as_bytes(), (self.tello_ip, TELLO_CMD_PORT)) {
-                eprintln!("Failed to send command: {}", err);
-                return false;
-            }
-
-            if wait {
-                println!("Sending command: {} to {}", cmd, &self.tello_ip);
-                let mut buff = [0; 1024];
-                if let Ok((recv_size, src)) = sock.recv_from(&mut buff) {
-                    if let Ok(v) = String::from_utf8(buff[..recv_size].to_vec()) {
-                        println!("From {}: {}", src, v);
-                        return true;
-                    } else {
-                        eprintln!("Failed to convert to string from u8 array");
-                    }
-                } else {
-                    eprintln!("Failed to receive message");
-                }
-
-                return false;
-            } else {
-                println!("Command sent: {} to {}", cmd, &self.tello_ip);
-                return true;
-            }
-        } else {
-            eprintln!("Failed to start sender");
-            return false;
+        if let Err(err) = socket.set_broadcast(true) {
+            return Err(err);
         }
+
+        if let Err(err) = socket.set_read_timeout(Some(self.timeout_dur)) {
+            return Err(err);
+        }
+
+        if let Err(err) = socket.send_to(cmd.as_bytes(), (self.tello_ip, TELLO_CMD_PORT)) {
+            return Err(err);
+        }
+
+        println!("Command sent: {} to {}", cmd, &self.tello_ip);
+
+        if !wait {
+            return Ok(());
+        }
+
+        println!("Waiting receive...");
+        let mut buf = [0; 1024];
+        let (size, s_addr) = match socket.recv_from(&mut buf) {
+            Ok((size, s_addr)) => (size, s_addr),
+            Err(err) => return Err(err),
+        };
+
+        println!(
+            "Received {} bytes from {}: {:?}",
+            size,
+            s_addr,
+            str::from_utf8(&buf[..size])
+        );
+
+        Ok(())
     }
 }

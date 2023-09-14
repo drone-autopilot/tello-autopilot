@@ -5,41 +5,33 @@ fn main() {
     let stdin = io::stdin();
     let mut reader = stdin.lock();
 
-    let local_ip = "0.0.0.0"
-        .parse()
-        .expect("Failed to parse local ip address");
+    let local_ip = "0.0.0.0".parse().expect("Failed to parse local ip address");
     let tello_ip = "192.168.10.1"
         .parse()
         .expect("Failed to parse tello ip address");
 
     // 接続チェック
     let tello = Tello::new(300, local_ip, tello_ip);
-    let result = tello.send_cmd("command", true);
 
-    if !result {
-        println!("Telloとの接続を確認してください.");
+    if let Err(err) = tello.send_cmd("command", true) {
+        eprintln!("Error occured in send_cmd: {:?}", err);
+        eprintln!("Do check the connection with tello");
+        //return;
     }
 
     tello.listen_state();
 
     // 入力ループ
+    let mut input = String::new();
     loop {
-        let mut input = String::new();
+        reader
+            .read_line(&mut input)
+            .expect("Failed to read line from stdin");
 
-        match reader.read_line(&mut input) {
-            Ok(0) => {
-                break;
-            }
-            Ok(_) => {
-                let result = tello.send_cmd(&input.lines().collect::<String>(), true);
-                if !result {
-                    eprintln!("Failed to send command: {}", &input);
-                }
-            }
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                break;
-            }
+        if let Err(err) = tello.send_cmd(&input.lines().collect::<String>(), true) {
+            eprintln!("Error occured in send_cmd: {:?}", err);
         }
+
+        input.clear();
     }
 }
