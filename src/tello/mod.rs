@@ -1,10 +1,14 @@
 use log::{error, info};
 use std::io::Error;
-use std::net::{IpAddr, UdpSocket};
-use std::str;
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
+use std::{
+    net::{IpAddr, UdpSocket},
+    str,
+};
+
+use self::cmd::Command;
 
 pub mod cmd;
 pub mod state;
@@ -66,7 +70,7 @@ impl Tello {
         });
     }
 
-    pub fn send_cmd(&self, cmd: &str, wait: bool) -> Result<(), Error> {
+    pub fn send_cmd(&self, cmd: Command, wait: bool) -> Result<(), Error> {
         let socket = match UdpSocket::bind((self.local_ip, TELLO_CMD_PORT)) {
             Ok(s) => s,
             Err(err) => return Err(err),
@@ -80,7 +84,9 @@ impl Tello {
             return Err(err);
         }
 
-        if let Err(err) = socket.send_to(cmd.as_bytes(), (self.tello_ip, TELLO_CMD_PORT)) {
+        if let Err(err) =
+            socket.send_to(cmd.to_string().as_bytes(), (self.tello_ip, TELLO_CMD_PORT))
+        {
             return Err(err);
         }
 

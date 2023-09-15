@@ -8,6 +8,18 @@ pub enum FlipCommandArg {
     Back,
 }
 
+impl FlipCommandArg {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "l" => Some(Self::Left),
+            "r" => Some(Self::Right),
+            "f" => Some(Self::Forward),
+            "b" => Some(Self::Back),
+            _ => None,
+        }
+    }
+}
+
 impl Display for FlipCommandArg {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         let s = match self {
@@ -91,73 +103,228 @@ pub enum Command {
     ReadSerialNumber,
 }
 
+impl Command {
+    pub fn from_str(s: &str) -> Option<Self> {
+        let parts: Vec<&str> = s.trim().split_whitespace().collect();
+
+        match parts.get(0) {
+            Some(&"command") => Some(Command::Command),
+            Some(&"takeoff") => Some(Command::Takeoff),
+            Some(&"land") => Some(Command::Land),
+            Some(&"streamon") => Some(Command::StreamOn),
+            Some(&"streamoff") => Some(Command::StreamOff),
+            Some(&"emergency") => Some(Command::Emergency),
+            Some(&"up") if parts.len() == 2 => {
+                let value = parts[1].parse().ok()?;
+                if value >= 20 && value <= 500 {
+                    Some(Command::Up(value))
+                } else {
+                    None
+                }
+            }
+            Some(&"down") if parts.len() == 2 => {
+                let value = parts[1].parse().ok()?;
+                if value >= 20 && value <= 500 {
+                    Some(Command::Down(value))
+                } else {
+                    None
+                }
+            }
+            Some(&"left") if parts.len() == 2 => {
+                let value = parts[1].parse().ok()?;
+                if value >= 20 && value <= 500 {
+                    Some(Command::Left(value))
+                } else {
+                    None
+                }
+            }
+            Some(&"right") if parts.len() == 2 => {
+                let value = parts[1].parse().ok()?;
+                if value >= 20 && value <= 500 {
+                    Some(Command::Right(value))
+                } else {
+                    None
+                }
+            }
+            Some(&"forward") if parts.len() == 2 => {
+                let value = parts[1].parse().ok()?;
+                if value >= 20 && value <= 500 {
+                    Some(Command::Forward(value))
+                } else {
+                    None
+                }
+            }
+            Some(&"back") if parts.len() == 2 => {
+                let value = parts[1].parse().ok()?;
+                if value >= 20 && value <= 500 {
+                    Some(Command::Back(value))
+                } else {
+                    None
+                }
+            }
+            Some(&"cw") if parts.len() == 2 => {
+                let value = parts[1].parse().ok()?;
+                if value >= 1 && value <= 360 {
+                    Some(Command::ClockwiseRotation(value))
+                } else {
+                    None
+                }
+            }
+            Some(&"ccw") if parts.len() == 2 => {
+                let value = parts[1].parse().ok()?;
+                if value >= 1 && value <= 360 {
+                    Some(Command::CounterClockwiseRotation(value))
+                } else {
+                    None
+                }
+            }
+            Some(&"flip") if parts.len() == 2 => {
+                let arg = FlipCommandArg::from_str(parts[1])?;
+                Some(Command::Flip(arg))
+            }
+            Some(&"go") if parts.len() == 6 => {
+                let x = parts[1].parse().ok()?;
+                let y = parts[2].parse().ok()?;
+                let z = parts[3].parse().ok()?;
+                let speed = parts[4].parse().ok()?;
+                Some(Command::Go {
+                    x,
+                    y,
+                    z,
+                    speed,
+                    mid: None, // Note: Mid value not parsed
+                })
+            }
+            Some(&"stop") => Some(Command::Stop),
+            Some(&"curve") if parts.len() == 8 => {
+                let x1 = parts[1].parse().ok()?;
+                let y1 = parts[2].parse().ok()?;
+                let z1 = parts[3].parse().ok()?;
+                let x2 = parts[4].parse().ok()?;
+                let y2 = parts[5].parse().ok()?;
+                let z2 = parts[6].parse().ok()?;
+                let speed = parts[7].parse().ok()?;
+                Some(Command::Curve {
+                    x1,
+                    y1,
+                    z1,
+                    x2,
+                    y2,
+                    z2,
+                    speed,
+                    mid: None, // Note: Mid value not parsed
+                })
+            }
+            Some(&"jump") if parts.len() == 9 => {
+                // Note: Jump command not fully implemented
+                Some(Command::Jump {
+                    x: 0,
+                    y: 0,
+                    z: 0,
+                    speed: 0,
+                    yaw: 0,
+                    mid1: 0,
+                    mid2: 0,
+                })
+            }
+            Some(&"speed") if parts.len() == 2 => {
+                let value = parts[1].parse().ok()?;
+                if value >= 10 && value <= 100 {
+                    Some(Command::Speed(value))
+                } else {
+                    None
+                }
+            }
+            Some(&"wifi") if parts.len() == 3 => {
+                let ssid = parts[1].to_string();
+                let pass = parts[2].to_string();
+                Some(Command::Wifi { ssid, pass })
+            }
+            Some(&"mon") => Some(Command::MissionpadOn),
+            Some(&"moff") => Some(Command::MissionpadOff),
+            Some(&"ap") if parts.len() == 3 => {
+                let ssid = parts[1].to_string();
+                let pass = parts[2].to_string();
+                Some(Command::AccessPoint { ssid, pass })
+            }
+            Some(&"speed?") => Some(Command::ReadSpeed),
+            Some(&"battery?") => Some(Command::ReadBattery),
+            Some(&"time?") => Some(Command::ReadTime),
+            Some(&"wifi?") => Some(Command::ReadWifi),
+            Some(&"sdk?") => Some(Command::ReadSdk),
+            Some(&"sn?") => Some(Command::ReadSerialNumber),
+            _ => None,
+        }
+    }
+}
+
 impl Display for Command {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         let s = match self {
-            Command::Command => "command".to_string(),
-            Command::Takeoff => "takeoff".to_string(),
-            Command::Land => "land".to_string(),
-            Command::StreamOn => "streamon".to_string(),
-            Command::StreamOff => "streamoff".to_string(),
-            Command::Emergency => "emergency".to_string(),
-            Command::Up(value) => {
+            Self::Command => "command".to_string(),
+            Self::Takeoff => "takeoff".to_string(),
+            Self::Land => "land".to_string(),
+            Self::StreamOn => "streamon".to_string(),
+            Self::StreamOff => "streamoff".to_string(),
+            Self::Emergency => "emergency".to_string(),
+            Self::Up(value) => {
                 if !(*value >= 20 && *value <= 500) {
                     panic!("Not allowed argument: {:?}, must be 20 ~ 500", self);
                 }
 
                 format!("up {}", value)
             }
-            Command::Down(value) => {
+            Self::Down(value) => {
                 if !(*value >= 20 && *value <= 500) {
                     panic!("Not allowed argument: {:?}, must be 20 ~ 500", self);
                 }
 
                 format!("down {}", value)
             }
-            Command::Left(value) => {
+            Self::Left(value) => {
                 if !(*value >= 20 && *value <= 500) {
                     panic!("Not allowed argument: {:?}, must be 20 ~ 500", self);
                 }
 
                 format!("left {}", value)
             }
-            Command::Right(value) => {
+            Self::Right(value) => {
                 if !(*value >= 20 && *value <= 500) {
                     panic!("Not allowed argument: {:?}, must be 20 ~ 500", self);
                 }
 
                 format!("right {}", value)
             }
-            Command::Forward(value) => {
+            Self::Forward(value) => {
                 if !(*value >= 20 && *value <= 500) {
                     panic!("Not allowed argument: {:?}, must be 20 ~ 500", self);
                 }
 
                 format!("forward {}", value)
             }
-            Command::Back(value) => {
+            Self::Back(value) => {
                 if !(*value >= 20 && *value <= 500) {
                     panic!("Not allowed argument: {:?}, must be 20 ~ 500", self);
                 }
 
                 format!("back {}", value)
             }
-            Command::ClockwiseRotation(value) => {
+            Self::ClockwiseRotation(value) => {
                 if !(*value >= 1 && *value <= 360) {
                     panic!("Not allowed argument: {:?}, must be 1 ~ 360", self);
                 }
 
                 format!("cw {}", value)
             }
-            Command::CounterClockwiseRotation(value) => {
+            Self::CounterClockwiseRotation(value) => {
                 if !(*value >= 1 && *value <= 360) {
                     panic!("Not allowed argument: {:?}, must be 1 ~ 360", self);
                 }
 
                 format!("ccw {}", value)
             }
-            Command::Flip(value) => format!("flip {}", value),
-            Command::Go {
+            Self::Flip(value) => format!("flip {}", value),
+            Self::Go {
                 x,
                 y,
                 z,
@@ -185,8 +352,8 @@ impl Display for Command {
                     None => format!("go {} {} {} {}", x, y, z, speed),
                 }
             }
-            Command::Stop => "stop".to_string(),
-            Command::Curve {
+            Self::Stop => "stop".to_string(),
+            Self::Curve {
                 x1,
                 y1,
                 z1,
@@ -229,7 +396,7 @@ impl Display for Command {
                     None => format!("curve {} {} {} {} {} {} {}", x1, y1, z1, x2, y2, z2, speed),
                 }
             }
-            Command::Jump {
+            Self::Jump {
                 x,
                 y,
                 z,
@@ -238,25 +405,25 @@ impl Display for Command {
                 mid1,
                 mid2,
             } => unimplemented!(), // need missionpad
-            Command::Speed(value) => {
+            Self::Speed(value) => {
                 if !(*value >= 10 && *value <= 100) {
                     panic!("Not allowed argument: {:?}, must be 10 ~ 100", self);
                 }
 
                 format!("speed {}", value)
             }
-            Command::Rc { a, b, c, d } => unimplemented!(), // unknown command
-            Command::Wifi { ssid, pass } => format!("wifi {} {}", ssid, pass),
-            Command::MissionpadOn => "mon".to_string(),
-            Command::MissionpadOff => "moff".to_string(),
-            Command::MissionpadDirection(_) => todo!(),
-            Command::AccessPoint { ssid, pass } => format!("ap {} {}", ssid, pass),
-            Command::ReadSpeed => "speed?".to_string(),
-            Command::ReadBattery => "battery?".to_string(),
-            Command::ReadTime => "time?".to_string(),
-            Command::ReadWifi => "wifi?".to_string(),
-            Command::ReadSdk => "sdk?".to_string(),
-            Command::ReadSerialNumber => "sn?".to_string(),
+            Self::Rc { a, b, c, d } => unimplemented!(), // unknown command
+            Self::Wifi { ssid, pass } => format!("wifi {} {}", ssid, pass),
+            Self::MissionpadOn => "mon".to_string(),
+            Self::MissionpadOff => "moff".to_string(),
+            Self::MissionpadDirection(_) => todo!(),
+            Self::AccessPoint { ssid, pass } => format!("ap {} {}", ssid, pass),
+            Self::ReadSpeed => "speed?".to_string(),
+            Self::ReadBattery => "battery?".to_string(),
+            Self::ReadTime => "time?".to_string(),
+            Self::ReadWifi => "wifi?".to_string(),
+            Self::ReadSdk => "sdk?".to_string(),
+            Self::ReadSerialNumber => "sn?".to_string(),
         };
 
         write!(f, "{}", s)
