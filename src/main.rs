@@ -22,10 +22,6 @@ fn main() {
         .parse()
         .expect("Failed to parse tello ip address");
 
-    // command test
-    let cmd = Command::Up(512);
-    println!("{:?} -> {}", &cmd, &cmd);
-
     let tello = Tello::new(300, local_ip, tello_ip);
 
     // 接続チェック
@@ -50,4 +46,9 @@ fn main() {
 
         input.clear();
     }
+}
+
+#[test]
+fn cmd_test() {
+    assert_eq!(Command::Up(20).to_string(), "up 20");
 }
