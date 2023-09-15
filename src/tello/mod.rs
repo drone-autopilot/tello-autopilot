@@ -50,7 +50,6 @@ impl Tello {
 
             loop {
                 info!("Waiting receive...");
-                let mut buf = [0; 1024];
                 match socket.recv_from(&mut buf) {
                     Ok((size, s_addr)) => {
                         info!(

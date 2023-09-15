@@ -1,13 +1,10 @@
 use env_logger;
-use log::{error, info};
+use log::error;
 use std::{
     env,
     io::{self, BufRead},
 };
-use tello_autopilot::tello::{
-    cmd::{Command, FlipCommandArg},
-    Tello,
-};
+use tello_autopilot::tello::{cmd::Command, Tello};
 
 fn main() {
     // env_logger setup
