@@ -163,7 +163,28 @@ impl Display for Command {
                 z,
                 speed,
                 mid,
-            } => todo!(),
+            } => {
+                if !(*x >= -500 && *x <= 500) {
+                    panic!("Not allowed argument (x): {:?}, must be -500 ~ 500", self);
+                }
+
+                if !(*y >= -500 && *y <= 500) {
+                    panic!("Not allowed argument (y): {:?}, must be -500 ~ 500", self);
+                }
+
+                if !(*z >= -500 && *z <= 500) {
+                    panic!("Not allowed argument (z): {:?}, must be -500 ~ 500", self);
+                }
+
+                if !(*speed >= 10 && *speed <= 100) {
+                    panic!("Not allowed argument (speed): {:?}, must be 10 ~ 100", self);
+                }
+
+                match mid {
+                    Some(_) => unimplemented!(), // need missionpad
+                    None => format!("go {} {} {} {}", x, y, z, speed),
+                }
+            }
             Command::Stop => "stop".to_string(),
             Command::Curve {
                 x1,
@@ -174,7 +195,40 @@ impl Display for Command {
                 z2,
                 speed,
                 mid,
-            } => todo!(),
+            } => {
+                if !(*x1 >= -500 && *x1 <= 500) {
+                    panic!("Not allowed argument (x1): {:?}, must be -500 ~ 500", self);
+                }
+
+                if !(*y1 >= -500 && *y1 <= 500) {
+                    panic!("Not allowed argument (y1): {:?}, must be -500 ~ 500", self);
+                }
+
+                if !(*z1 >= -500 && *z1 <= 500) {
+                    panic!("Not allowed argument (z1): {:?}, must be -500 ~ 500", self);
+                }
+
+                if !(*x2 >= -500 && *x2 <= 500) {
+                    panic!("Not allowed argument (x2): {:?}, must be -500 ~ 500", self);
+                }
+
+                if !(*y2 >= -500 && *y2 <= 500) {
+                    panic!("Not allowed argument (y2): {:?}, must be -500 ~ 500", self);
+                }
+
+                if !(*z2 >= -500 && *z2 <= 500) {
+                    panic!("Not allowed argument (z2): {:?}, must be -500 ~ 500", self);
+                }
+
+                if !(*speed >= 10 && *speed <= 100) {
+                    panic!("Not allowed argument (speed): {:?}, must be 10 ~ 100", self);
+                }
+
+                match mid {
+                    Some(_) => unimplemented!(), // need missionpad
+                    None => format!("curve {} {} {} {} {} {} {}", x1, y1, z1, x2, y2, z2, speed),
+                }
+            }
             Command::Jump {
                 x,
                 y,
@@ -183,7 +237,7 @@ impl Display for Command {
                 yaw,
                 mid1,
                 mid2,
-            } => todo!(),
+            } => unimplemented!(), // need missionpad
             Command::Speed(value) => {
                 if !(*value >= 10 && *value <= 100) {
                     panic!("Not allowed argument: {:?}, must be 10 ~ 100", self);
@@ -191,12 +245,12 @@ impl Display for Command {
 
                 format!("speed {}", value)
             }
-            Command::Rc { a, b, c, d } => todo!(),
-            Command::Wifi { ssid, pass } => todo!(),
+            Command::Rc { a, b, c, d } => unimplemented!(), // unknown command
+            Command::Wifi { ssid, pass } => format!("wifi {} {}", ssid, pass),
             Command::MissionpadOn => "mon".to_string(),
             Command::MissionpadOff => "moff".to_string(),
             Command::MissionpadDirection(_) => todo!(),
-            Command::AccessPoint { ssid, pass } => todo!(),
+            Command::AccessPoint { ssid, pass } => format!("ap {} {}", ssid, pass),
             Command::ReadSpeed => "speed?".to_string(),
             Command::ReadBattery => "battery?".to_string(),
             Command::ReadTime => "time?".to_string(),

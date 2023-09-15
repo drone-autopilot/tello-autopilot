@@ -51,4 +51,18 @@ fn main() {
 #[test]
 fn cmd_test() {
     assert_eq!(Command::Up(20).to_string(), "up 20");
+    assert_eq!(
+        Command::Curve {
+            x1: -102,
+            y1: 34,
+            z1: 43,
+            x2: -67,
+            y2: 326,
+            z2: 411,
+            speed: 34,
+            mid: None
+        }
+        .to_string(),
+        "curve -102 34 43 -67 326 411 34"
+    )
 }
