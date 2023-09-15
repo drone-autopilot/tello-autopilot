@@ -7,6 +7,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 pub mod cmd;
+pub mod state;
 
 const TELLO_CMD_PORT: u16 = 8889;
 const TELLO_STATE_PORT: u16 = 8890;
