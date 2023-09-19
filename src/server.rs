@@ -1,6 +1,6 @@
 use log::{error, info};
+use std::io::{Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
-use std::io::{Write, Read};
 use std::thread;
 
 pub struct Server {

@@ -90,19 +90,22 @@ impl Tello {
 
             let mut buf = [0; 1024];
 
+            let local_socket = match UdpSocket::bind("0.0.0.0:0") {
+                Ok(socket) => socket,
+                Err(err) => {
+                    error!("Failed to create socket: {:?}", err);
+                    return;
+                }
+            };
+
             loop {
                 // info!("Waiting receive...");
                 match socket.recv_from(&mut buf) {
-                    Ok((size, _)) =>  {
-                        let socket = match UdpSocket::bind("0.0.0.0:0") {
-                            Ok(socket) => socket,
-                            Err(_e) => {
-                                // error!("Failed to create socket: {:?}", err);
-                                continue;
-                            }
-                        };
-                        let _ = socket.send_to(&buf[..size], (local_ip, SERVER_STREAM_PORT));
-                    },
+                    Ok((size, _)) => {
+                        let res =
+                            local_socket.send_to(&buf[..size], ("127.0.0.1", SERVER_STREAM_PORT));
+                        info!("udp send: {:?}", res);
+                    }
                     Err(_err) => {
                         // error!("Failed to receive data: {:?}", err);
                     }
@@ -147,9 +150,9 @@ impl Tello {
                 Ok(s) => {
                     println!("{:?}", CommandResult::from_str(s));
                     if cmd == Command::StreamOn {
-                        self.listen_stream();// todo
+                        self.listen_stream(); // todo
                     }
-                },
+                }
                 Err(err) => error!("{:?}", err), // TODO: return err but incorrected type
             },
             Err(err) => return Err(err),
