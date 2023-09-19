@@ -1,12 +1,14 @@
 use log::{error, info};
 use std::io::Error;
 use std::thread;
-use std::thread::sleep;
+// use std::thread::sleep;
 use std::time::Duration;
 use std::{
     net::{IpAddr, UdpSocket},
     str,
 };
+
+use crate::server::Server;
 
 use self::cmd::Command;
 
@@ -31,7 +33,7 @@ impl Tello {
         }
     }
 
-    pub fn listen_state(&self) {
+    pub fn listen_state(&self, mut server: Server) {
         let local_ip = self.local_ip;
         let timeout_dur = self.timeout_dur;
         let addr = (local_ip, TELLO_STATE_PORT);
@@ -49,22 +51,25 @@ impl Tello {
             let mut buf = [0; 1024];
 
             loop {
-                info!("Waiting receive...");
+                // info!("Waiting receive...");
                 match socket.recv_from(&mut buf) {
-                    Ok((size, s_addr)) => {
-                        info!(
-                            "Received {} bytes from {}: {:?}",
-                            size,
-                            s_addr,
-                            str::from_utf8(&buf[..size])
-                        );
+                    Ok((size, _s_addr)) => {
+                        // info!(
+                        //     "Received {} bytes from {}: {:?}",
+                        //     size,
+                        //     s_addr,
+                        //     str::from_utf8(&buf[..size])
+                        // );
+                        if let Ok(data) = str::from_utf8(&buf[..size]){
+                            server.send_message(data);
+                        }
                     }
-                    Err(err) => {
-                        error!("Failed to receive data: {:?}", err);
+                    Err(_err) => {
+                        // error!("Failed to receive data: {:?}", err);
                     }
                 }
 
-                sleep(Duration::from_secs(1));
+                // sleep(Duration::from_secs(1));
             }
         });
     }

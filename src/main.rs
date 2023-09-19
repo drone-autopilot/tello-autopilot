@@ -4,7 +4,7 @@ use std::{
     env,
     io::{self, BufRead},
 };
-use tello_autopilot::tello::{cmd::Command, Tello};
+use tello_autopilot::{tello::{cmd::Command, Tello}, server::Server};
 
 fn main() {
     // env_logger setup
@@ -17,10 +17,15 @@ fn main() {
     let stdin = io::stdin();
     let mut reader = stdin.lock();
 
-    let local_ip = "0.0.0.0".parse().expect("Failed to parse local ip address");
+    let local_ip = "0.0.0.0"
+        .parse()
+        .expect("Failed to parse local ip address");
     let tello_ip = "192.168.10.1"
         .parse()
         .expect("Failed to parse tello ip address");
+    let client_ip = "127.0.0.1"
+        .parse()
+        .expect("Failed to parse client ip address");
 
     let tello = Tello::new(300, local_ip, tello_ip);
 
@@ -31,7 +36,9 @@ fn main() {
         //return;
     }
 
-    tello.listen_state();
+    let mut tello_server = Server::new(client_ip, 8891);
+    tello_server.connect();
+    tello.listen_state(tello_server);
 
     // 入力ループ
     let mut input = String::new();
