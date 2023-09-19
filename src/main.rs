@@ -36,9 +36,11 @@ fn main() {
         //return;
     }
 
-    let mut tello_server = Server::new(client_ip, 8891);
-    tello_server.connect();
-    tello.listen_state(tello_server);
+    let mut tcp_server = Server::new(client_ip, 8891);
+    tcp_server.connect();
+    tello.listen_state(tcp_server);
+
+    tello.listen_stream();
 
     // 入力ループ
     let mut input = String::new();

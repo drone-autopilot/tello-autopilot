@@ -1,7 +1,7 @@
 use log::{error, info};
 use std::io::Error;
 use std::thread;
-use std::thread::sleep;
+// use std::thread::sleep;
 use std::time::Duration;
 use std::{
     net::{IpAddr, UdpSocket},
@@ -18,6 +18,8 @@ pub mod state;
 
 const TELLO_CMD_PORT: u16 = 8889;
 const TELLO_STATE_PORT: u16 = 8890;
+const TELLO_STREAM_PORT: u16 = 11111;
+const SERVER_STREAM_PORT: u16 = 11112;
 
 pub struct Tello {
     timeout_dur: Duration,
@@ -52,21 +54,61 @@ impl Tello {
             let mut buf = [0; 1024];
 
             loop {
-                info!("Waiting receive...");
+                // info!("Waiting receive...");
                 match socket.recv_from(&mut buf) {
                     Ok((size, _)) => match str::from_utf8(&buf[..size]) {
                         Ok(s) => {
-                            println!("{:?}", CommandResult::from_str(s));
+                            // println!("{:?}", CommandResult::from_str(s));
                             server.send_message(s);
                         }
                         Err(err) => error!("{:?}", err),
                     },
-                    Err(err) => {
-                        error!("Failed to receive data: {:?}", err);
+                    Err(_err) => {
+                        // error!("Failed to receive data: {:?}", err);
                     }
                 }
 
-                sleep(Duration::from_secs(1));
+                // sleep(Duration::from_secs(1));
+            }
+        });
+    }
+
+    pub fn listen_stream(&self) {
+        let local_ip = self.local_ip;
+        let timeout_dur = self.timeout_dur;
+        let addr = (local_ip, TELLO_STREAM_PORT);
+        thread::spawn(move || {
+            let socket = UdpSocket::bind(addr).expect("Failed to bind to socket");
+
+            if let Err(err) = socket.set_broadcast(true) {
+                error!("Failed to set broadcast: {}", err);
+            }
+
+            if let Err(err) = socket.set_read_timeout(Some(timeout_dur)) {
+                error!("Failed to set read timeout: {}", err);
+            }
+
+            let mut buf = [0; 1024];
+
+            loop {
+                // info!("Waiting receive...");
+                match socket.recv_from(&mut buf) {
+                    Ok((size, _)) =>  {
+                        let socket = match UdpSocket::bind("0.0.0.0:0") {
+                            Ok(socket) => socket,
+                            Err(_e) => {
+                                // error!("Failed to create socket: {:?}", err);
+                                continue;
+                            }
+                        };
+                        let _ = socket.send_to(&buf[..size], (local_ip, SERVER_STREAM_PORT));
+                    },
+                    Err(_err) => {
+                        // error!("Failed to receive data: {:?}", err);
+                    }
+                }
+
+                // sleep(Duration::from_secs(1));
             }
         });
     }
