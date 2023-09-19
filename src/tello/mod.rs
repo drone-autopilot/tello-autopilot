@@ -1,7 +1,7 @@
 use log::{error, info};
 use std::io::Error;
 use std::thread;
-// use std::thread::sleep;
+use std::thread::sleep;
 use std::time::Duration;
 use std::{
     net::{IpAddr, UdpSocket},
@@ -9,6 +9,7 @@ use std::{
 };
 
 use crate::server::Server;
+use crate::tello::cmd::CommandResult;
 
 use self::cmd::Command;
 
@@ -51,25 +52,21 @@ impl Tello {
             let mut buf = [0; 1024];
 
             loop {
-                // info!("Waiting receive...");
+                info!("Waiting receive...");
                 match socket.recv_from(&mut buf) {
-                    Ok((size, _s_addr)) => {
-                        // info!(
-                        //     "Received {} bytes from {}: {:?}",
-                        //     size,
-                        //     s_addr,
-                        //     str::from_utf8(&buf[..size])
-                        // );
-                        if let Ok(data) = str::from_utf8(&buf[..size]){
-                            server.send_message(data);
+                    Ok((size, _)) => match str::from_utf8(&buf[..size]) {
+                        Ok(s) => {
+                            println!("{:?}", CommandResult::from_str(s));
+                            server.send_message(s);
                         }
-                    }
-                    Err(_err) => {
-                        // error!("Failed to receive data: {:?}", err);
+                        Err(err) => error!("{:?}", err),
+                    },
+                    Err(err) => {
+                        error!("Failed to receive data: {:?}", err);
                     }
                 }
 
-                // sleep(Duration::from_secs(1));
+                sleep(Duration::from_secs(1));
             }
         });
     }
@@ -102,17 +99,14 @@ impl Tello {
 
         info!("Waiting receive...");
         let mut buf = [0; 1024];
-        let (size, s_addr) = match socket.recv_from(&mut buf) {
-            Ok((size, s_addr)) => (size, s_addr),
-            Err(err) => return Err(err),
-        };
 
-        info!(
-            "Received {} bytes from {}: {:?}",
-            size,
-            s_addr,
-            str::from_utf8(&buf[..size])
-        );
+        match socket.recv_from(&mut buf) {
+            Ok((size, _)) => match str::from_utf8(&buf[..size]) {
+                Ok(s) => println!("{:?}", CommandResult::from_str(s)),
+                Err(err) => error!("{:?}", err), // TODO: return err but incorrected type
+            },
+            Err(err) => return Err(err),
+        }
 
         Ok(())
     }

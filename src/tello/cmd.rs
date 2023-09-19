@@ -1,5 +1,7 @@
 use std::fmt::{Display, Formatter, Result};
 
+use super::state::State;
+
 #[derive(Debug, Clone, Copy)]
 pub enum FlipCommandArg {
     Left,
@@ -397,13 +399,13 @@ impl Display for Command {
                 }
             }
             Self::Jump {
-                x: _,
-                y: _,
-                z: _,
-                speed: _,
-                yaw: _,
-                mid1: _,
-                mid2: _,
+                x,
+                y,
+                z,
+                speed,
+                yaw,
+                mid1,
+                mid2,
             } => unimplemented!(), // need missionpad
             Self::Speed(value) => {
                 if !(*value >= 10 && *value <= 100) {
@@ -412,7 +414,7 @@ impl Display for Command {
 
                 format!("speed {}", value)
             }
-            Self::Rc { a: _, b: _, c: _, d: _ } => unimplemented!(), // unknown command
+            Self::Rc { a, b, c, d } => unimplemented!(), // unknown command
             Self::Wifi { ssid, pass } => format!("wifi {} {}", ssid, pass),
             Self::MissionpadOn => "mon".to_string(),
             Self::MissionpadOff => "moff".to_string(),
@@ -427,5 +429,26 @@ impl Display for Command {
         };
 
         write!(f, "{}", s)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum CommandResult {
+    Ok,
+    Error,
+    State(State),
+    Other(String),
+}
+
+impl CommandResult {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "ok" => CommandResult::Ok,
+            "error" => CommandResult::Error,
+            s => match State::from_str(s) {
+                Some(state) => CommandResult::State(state),
+                None => CommandResult::Other(s.to_string()),
+            },
+        }
     }
 }
