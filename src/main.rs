@@ -40,8 +40,6 @@ fn main() {
     tcp_server.connect();
     tello.listen_state(tcp_server);
 
-    tello.listen_stream();
-
     // 入力ループ
     let mut input = String::new();
     loop {

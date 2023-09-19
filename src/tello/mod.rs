@@ -73,7 +73,7 @@ impl Tello {
         });
     }
 
-    pub fn listen_stream(&self) {
+    fn listen_stream(&self) {
         let local_ip = self.local_ip;
         let timeout_dur = self.timeout_dur;
         let addr = (local_ip, TELLO_STREAM_PORT);
@@ -144,7 +144,12 @@ impl Tello {
 
         match socket.recv_from(&mut buf) {
             Ok((size, _)) => match str::from_utf8(&buf[..size]) {
-                Ok(s) => println!("{:?}", CommandResult::from_str(s)),
+                Ok(s) => {
+                    println!("{:?}", CommandResult::from_str(s));
+                    if cmd == Command::StreamOn {
+                        self.listen_stream();// todo
+                    }
+                },
                 Err(err) => error!("{:?}", err), // TODO: return err but incorrected type
             },
             Err(err) => return Err(err),

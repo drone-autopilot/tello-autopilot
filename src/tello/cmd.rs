@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter, Result};
 
 use super::state::State;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FlipCommandArg {
     Left,
     Right,
@@ -35,7 +35,7 @@ impl Display for FlipCommandArg {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Command,
     Takeoff,
