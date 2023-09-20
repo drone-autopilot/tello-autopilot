@@ -55,7 +55,7 @@ impl Tello {
             let mut buf = [0; 1024];
 
             loop {
-                info!("Waiting receive...");
+                // info!("Waiting receive...");
                 match socket.recv_from(&mut buf) {
                     Ok((size, _)) => match str::from_utf8(&buf[..size]) {
                         Ok(s) => {
@@ -75,7 +75,7 @@ impl Tello {
                     }
                 }
 
-                //sleep(Duration::from_secs(1));
+                // sleep(Duration::from_secs(1));
             }
         });
     }
