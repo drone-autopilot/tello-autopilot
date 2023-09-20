@@ -25,14 +25,16 @@ pub struct Tello {
     timeout_dur: Duration,
     local_ip: IpAddr,
     tello_ip: IpAddr,
+    watchdog_ip: IpAddr,
 }
 
 impl Tello {
-    pub fn new(timeout_millis: u64, local_ip: IpAddr, tello_ip: IpAddr) -> Self {
+    pub fn new(timeout_millis: u64, local_ip: IpAddr, tello_ip: IpAddr, watchdog_ip: IpAddr) -> Self {
         Self {
             timeout_dur: Duration::from_millis(timeout_millis),
             local_ip,
             tello_ip,
+            watchdog_ip,
         }
     }
 
@@ -75,6 +77,7 @@ impl Tello {
 
     fn listen_stream(&self) {
         let local_ip = self.local_ip;
+        let watchdog_ip = self.watchdog_ip;
         let timeout_dur = self.timeout_dur;
         let addr = (local_ip, TELLO_STREAM_PORT);
         thread::spawn(move || {
@@ -88,23 +91,15 @@ impl Tello {
                 error!("Failed to set read timeout: {}", err);
             }
 
-            let mut buf = [0; 1024];
-
-            let local_socket = match UdpSocket::bind("0.0.0.0:0") {
-                Ok(socket) => socket,
-                Err(err) => {
-                    error!("Failed to create socket: {:?}", err);
-                    return;
-                }
-            };
+            let mut buf = [0; 1460];
 
             loop {
                 // info!("Waiting receive...");
                 match socket.recv_from(&mut buf) {
                     Ok((size, _)) => {
-                        let res =
-                            local_socket.send_to(&buf[..size], ("127.0.0.1", SERVER_STREAM_PORT));
-                        info!("udp send: {:?}", res);
+                        let _res =
+                            socket.send_to(&buf[..size], (watchdog_ip, SERVER_STREAM_PORT));
+                        // info!("udp send: {:?}", res);
                     }
                     Err(_err) => {
                         // error!("Failed to receive data: {:?}", err);

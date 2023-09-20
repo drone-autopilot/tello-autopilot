@@ -24,11 +24,11 @@ fn main() {
     let tello_ip = "192.168.10.1"
         .parse()
         .expect("Failed to parse tello ip address");
-    let client_ip = "127.0.0.1"
+    let watchdog_ip = "127.0.0.1"
         .parse()
-        .expect("Failed to parse client ip address");
+        .expect("Failed to parse watchdog ip address");
 
-    let tello = Tello::new(300, local_ip, tello_ip);
+    let tello = Tello::new(300, local_ip, tello_ip, watchdog_ip);
 
     // 接続チェック
     if let Err(err) = tello.send_cmd(Command::Command, true) {
@@ -37,7 +37,7 @@ fn main() {
         return;
     }
 
-    let mut tcp_server = Server::new(client_ip, 8891);
+    let mut tcp_server = Server::new(watchdog_ip, 8891);
     tcp_server.connect();
     tello.listen_state(tcp_server);
 
