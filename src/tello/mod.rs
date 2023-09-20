@@ -1,7 +1,6 @@
 use log::{error, info};
 use std::io::Error;
 use std::thread;
-// use std::thread::sleep;
 use std::time::Duration;
 use std::{
     net::{IpAddr, UdpSocket},
@@ -54,21 +53,27 @@ impl Tello {
             let mut buf = [0; 1024];
 
             loop {
-                // info!("Waiting receive...");
+                info!("Waiting receive...");
                 match socket.recv_from(&mut buf) {
                     Ok((size, _)) => match str::from_utf8(&buf[..size]) {
                         Ok(s) => {
-                            // println!("{:?}", CommandResult::from_str(s));
-                            server.send_message(s);
+                            match CommandResult::from_str(s) {
+                                CommandResult::State(state) => {
+                                    server.send_message(
+                                        serde_json::to_string(&state).unwrap().as_str(),
+                                    );
+                                }
+                                _ => (),
+                            };
                         }
                         Err(err) => error!("{:?}", err),
                     },
-                    Err(_err) => {
-                        // error!("Failed to receive data: {:?}", err);
+                    Err(err) => {
+                        error!("Failed to receive data: {:?}", err);
                     }
                 }
 
-                // sleep(Duration::from_secs(1));
+                //sleep(Duration::from_secs(1));
             }
         });
     }
