@@ -399,13 +399,13 @@ impl Display for Command {
                 }
             }
             Self::Jump {
-                x,
-                y,
-                z,
-                speed,
-                yaw,
-                mid1,
-                mid2,
+                x: _,
+                y: _,
+                z: _,
+                speed: _,
+                yaw: _,
+                mid1: _,
+                mid2: _,
             } => unimplemented!(), // need missionpad
             Self::Speed(value) => {
                 if !(*value >= 10 && *value <= 100) {
@@ -414,7 +414,12 @@ impl Display for Command {
 
                 format!("speed {}", value)
             }
-            Self::Rc { a, b, c, d } => unimplemented!(), // unknown command
+            Self::Rc {
+                a: _,
+                b: _,
+                c: _,
+                d: _,
+            } => unimplemented!(), // unknown command
             Self::Wifi { ssid, pass } => format!("wifi {} {}", ssid, pass),
             Self::MissionpadOn => "mon".to_string(),
             Self::MissionpadOff => "moff".to_string(),

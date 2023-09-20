@@ -1,4 +1,6 @@
-#[derive(Debug, Clone, Copy)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct PointState {
     pub x: f32,
     pub y: f32,
@@ -16,7 +18,7 @@ impl Default for PointState {
 }
 
 // TODO: implement states for missionpad
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct State {
     pub pitch: isize,
     pub roll: isize,
