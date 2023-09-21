@@ -437,7 +437,7 @@ impl Display for Command {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CommandResult {
     Ok,
     Error,
