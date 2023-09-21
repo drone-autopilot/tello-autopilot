@@ -16,6 +16,7 @@ use crate::tello::{
 const TELLO_CMD_PORT: u16 = 8889;
 const TELLO_STATE_PORT: u16 = 8890;
 const TELLO_VIDEO_STREAM_PORT: u16 = 11111;
+const SERVER_VIDEO_STREAM_PORT: u16 = 11112;
 const VIDEO_STREAM_BUF_SIZE: usize = 1460;
 
 pub struct Tello {
@@ -87,11 +88,13 @@ impl Tello {
         Ok(State::from_str(res_str))
     }
 
-    pub fn receive_video_stream(
+    pub fn receive_and_send_video_stream(
         &self,
         buf: &mut [u8; VIDEO_STREAM_BUF_SIZE],
     ) -> Result<usize, Error> {
         let (size, _) = self.video_socket.recv_from(buf)?;
+        self.video_socket
+            .send_to(buf, ("127.0.0.1", SERVER_VIDEO_STREAM_PORT))?;
         Ok(size)
     }
 }

@@ -20,7 +20,7 @@ pub struct WatchdogServer {
 }
 
 impl WatchdogServer {
-    pub fn new(timeout_millis: u64, client_ip: IpAddr) -> Result<Self, std::io::Error> {
+    pub fn new(timeout_millis: u64, client_ip: IpAddr) -> Result<Self, Error> {
         Ok(Self {
             timeout_dur: Duration::from_millis(timeout_millis),
             state_stream: None,

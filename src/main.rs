@@ -124,20 +124,18 @@ fn main() {
 
     // video stream thread
     let tello_clone2 = Arc::clone(&arc_tello);
-    let ws_clone2 = Arc::clone(&arc_watchdog_server);
+    //let ws_clone2 = Arc::clone(&arc_watchdog_server);
     let t4 = thread::spawn(move || {
         let mut buf = [0; 1460];
 
         loop {
             if let Ok(ref mut m_tello) = tello_clone2.try_lock() {
-                m_tello.receive_video_stream(&mut buf);
+                m_tello.receive_and_send_video_stream(&mut buf);
             }
 
-            if let Ok(ref mut m_ws) = ws_clone2.try_lock() {
-                m_ws.send_video_stream(&buf);
-            }
-
-            thread::sleep(Duration::from_millis(400));
+            // if let Ok(ref mut m_ws) = ws_clone2.try_lock() {
+            //     m_ws.send_video_stream(&buf);
+            // }
         }
     });
 
