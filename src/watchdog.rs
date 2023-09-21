@@ -31,12 +31,16 @@ impl WatchdogServer {
     }
 
     pub fn wait_for_connection(&mut self) -> Result<(), Error> {
+        let dur = Some(self.timeout_dur);
+
         let state_socket = TcpListener::bind((self.client_ip, SERVER_STATE_PORT))?;
         let (stream, _) = state_socket.accept()?;
+        stream.set_write_timeout(dur)?;
         self.state_stream = Some(stream);
 
         let cmd_socket = TcpListener::bind((self.client_ip, SERVER_CMD_PORT))?;
         let (stream, _) = cmd_socket.accept()?;
+        stream.set_read_timeout(dur)?;
         self.cmd_stream = Some(stream);
 
         self.video_socket.set_broadcast(true)?;
