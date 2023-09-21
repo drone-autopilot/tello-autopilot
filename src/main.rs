@@ -24,14 +24,12 @@ fn main() {
     let watchdog_ip = "127.0.0.1"
         .parse()
         .expect("Failed to parse watchdog ip address");
-    let tello;
-
-    tello = Tello::new(300, local_ip, tello_ip, watchdog_ip);
+    let tello = Tello::new(300, local_ip, tello_ip, watchdog_ip);
 
     // 接続チェック
     if let Err(err) = tello.send_cmd(Command::Command, true) {
         error!("Error occured in send_cmd: {:?}", err);
-        error!("Do check the connection with tello");
+        error!("Please check the connection with Tello");
         return;
     }
 

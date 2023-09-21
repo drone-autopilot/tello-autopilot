@@ -1,16 +1,11 @@
 use log::{error, info};
 use std::io::{Error, Write, Read};
-use std::net::TcpListener;
-use std::sync::Arc;
+use std::net::{TcpListener, IpAddr, UdpSocket};
 use std::thread;
 use std::time::Duration;
-use std::{
-    net::{IpAddr, UdpSocket},
-    str,
-};
+use std::str;
 
 use crate::tello::cmd::CommandResult;
-
 use self::cmd::Command;
 
 pub mod cmd;
