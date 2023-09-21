@@ -1,5 +1,7 @@
 use log::{error, info};
-use std::io::Error;
+use std::io::{Error, Write, Read};
+use std::net::TcpListener;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use std::{
@@ -7,7 +9,6 @@ use std::{
     str,
 };
 
-use crate::server::Server;
 use crate::tello::cmd::CommandResult;
 
 use self::cmd::Command;
@@ -18,6 +19,8 @@ pub mod state;
 const TELLO_CMD_PORT: u16 = 8889;
 const TELLO_STATE_PORT: u16 = 8890;
 const TELLO_STREAM_PORT: u16 = 11111;
+const SERVER_CMD_PORT: u16 = 8989;
+const SERVER_STATE_PORT: u16 = 8990;
 const SERVER_STREAM_PORT: u16 = 11112;
 
 pub struct Tello {
@@ -37,10 +40,35 @@ impl Tello {
         }
     }
 
-    pub fn listen_state(&self, mut server: Server) {
+    pub fn listen_state(&self) {
         let local_ip = self.local_ip;
         let timeout_dur = self.timeout_dur;
         let addr = (local_ip, TELLO_STATE_PORT);
+        let watchdog_ip = self.watchdog_ip;
+        let mut watchdog;
+
+        // ウォッチドッグ: state取得ポートに接続
+        match TcpListener::bind((watchdog_ip, SERVER_STATE_PORT)) {
+            Ok(listener) => {
+                info!("Waiting for a watchdog(state) to connect...");
+
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        info!("Watchdog(state) connected!");
+                        watchdog = stream;
+                    }
+                    Err(e) => {
+                        error!("Error accepting connection: {:?}", e);
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to bind: {:?}", e);
+                return;
+            }
+        }
+
         thread::spawn(move || {
             let socket = UdpSocket::bind(addr).expect("Failed to bind to socket");
 
@@ -61,9 +89,9 @@ impl Tello {
                         Ok(s) => {
                             match CommandResult::from_str(s) {
                                 CommandResult::State(state) => {
-                                    server.send_message(
-                                        serde_json::to_string(&state).unwrap().as_str(),
-                                    );
+                                    if let Err(e) = watchdog.write_all(serde_json::to_string(&state).unwrap().as_str().trim().as_bytes()) {
+                                        error!("Failed to send message: {:?}", e);
+                                    }
                                 }
                                 _ => (),
                             };
@@ -76,6 +104,7 @@ impl Tello {
                 }
 
                 // sleep(Duration::from_secs(1));
+
             }
         });
     }
@@ -150,7 +179,7 @@ impl Tello {
                 Ok(s) => {
                     println!("{:?}", CommandResult::from_str(s));
                     if cmd == Command::StreamOn {
-                        self.listen_stream(); // todo
+                        self.listen_stream();
                     }
                 }
                 Err(err) => error!("{:?}", err), // TODO: return err but incorrected type
@@ -159,5 +188,72 @@ impl Tello {
         }
 
         Ok(())
+    }
+
+    pub fn handle_watchdog(&self) {
+        let watchdog_ip = self.watchdog_ip;
+        let mut watchdog;
+
+        // ウォッチドッグ: cmd/response用ポートに接続
+        match TcpListener::bind((watchdog_ip, SERVER_CMD_PORT)) {
+            Ok(listener) => {
+                info!("Waiting for a watchdog(cmd/res) to connect...");
+
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        info!("Watchdog(cmd/res) connected!");
+                        watchdog = stream;
+                    }
+                    Err(e) => {
+                        error!("Error accepting connection: {:?}", e);
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to bind: {:?}", e);
+                return;
+            }
+        }
+
+        thread::spawn(move || {
+            let mut buffer = [0; 1024];
+
+            loop {
+                match watchdog.read(&mut buffer) {
+                    Ok(bytes_read) => {
+                        let message = String::from_utf8_lossy(&buffer[0..bytes_read]);
+                        println!("Received: {}", message);
+
+                        if let Some(_cmd) = Command::from_str(message.trim()) {
+                            //
+                        } else {
+                            let response = format!("Invalid command: \"{}\"", message.trim());
+                            if let Err(e) = watchdog.write_all(response.as_bytes()) {
+                                error!("Failed to send message: {:?}", e);
+                            }
+                        }
+
+                        // send_cmdを利用したい
+                        // if let Some(cmd) = Command::from_str(message.trim()) {
+                        //     if let Err(err) = self.send_cmd(cmd, true) {
+                        //         let response = format!("Error occured in send_cmd: {:?}", err);
+                        //         if let Err(e) = watchdog.write_all(response.as_bytes()) {
+                        //             error!("Failed to send message: {:?}", e);
+                        //         }
+                        //     }
+                        // } else {
+                        //     let response = format!("Invalid command: \"{}\"", message.trim());
+                        //     if let Err(e) = watchdog.write_all(response.as_bytes()) {
+                        //         error!("Failed to send message: {:?}", e);
+                        //     }
+                        // }
+                    }
+                    Err(e) => {
+                        error!("Failed to read from watchdog: {:?}", e);
+                    }
+                }
+            }
+        });
     }
 }

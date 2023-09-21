@@ -4,10 +4,7 @@ use std::{
     env,
     io::{self, BufRead},
 };
-use tello_autopilot::{
-    server::Server,
-    tello::{cmd::Command, Tello},
-};
+use tello_autopilot::tello::{cmd::Command, Tello};
 
 fn main() {
     // env_logger setup
@@ -27,8 +24,9 @@ fn main() {
     let watchdog_ip = "127.0.0.1"
         .parse()
         .expect("Failed to parse watchdog ip address");
+    let tello;
 
-    let tello = Tello::new(300, local_ip, tello_ip, watchdog_ip);
+    tello = Tello::new(300, local_ip, tello_ip, watchdog_ip);
 
     // 接続チェック
     if let Err(err) = tello.send_cmd(Command::Command, true) {
@@ -37,9 +35,8 @@ fn main() {
         return;
     }
 
-    let mut tcp_server = Server::new(watchdog_ip, 8891);
-    tcp_server.connect();
-    tello.listen_state(tcp_server);
+    tello.listen_state();
+    tello.handle_watchdog();
 
     // 入力ループ
     let mut input = String::new();
