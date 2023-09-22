@@ -1,3 +1,2 @@
-pub mod tello;
-pub mod test;
-pub mod watchdog;
+pub mod state;
+pub mod cmd;
