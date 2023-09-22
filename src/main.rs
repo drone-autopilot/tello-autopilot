@@ -1,173 +1,115 @@
-use std::{
-    env,
-    io::{self, BufRead},
-    sync::{Arc, Mutex},
-    thread,
-    time::Duration,
-};
+use std::{net::{IpAddr, Ipv4Addr}, env, time::Duration, sync::Arc};
+use log::{info, error};
+use tokio::{net::{UdpSocket, TcpStream, TcpListener}, time::{timeout, self}, sync::Mutex, io::AsyncWriteExt};
+use std::str;
 
-use log::{error, info};
-use tello_autopilot::{
-    tello::{
-        cmd::{Command, CommandResult},
-        Tello,
-    },
-    watchdog::WatchdogServer,
-};
+const LOCAL_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(0,0,0,0));
 
-fn main() {
+const TELLO_CMD_PORT: u16 = 8889;
+const TELLO_STATE_PORT: u16 = 8890;
+const TELLO_VIDEO_STREAM_PORT: u16 = 11111;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env::set_var("RUST_LOG", "info");
     env_logger::init();
 
-    let stdin = io::stdin();
+    let cmd_socket = UdpSocket::bind((LOCAL_IP, TELLO_CMD_PORT)).await?;
+    let state_socket = UdpSocket::bind((LOCAL_IP, TELLO_STATE_PORT)).await?;
+    let video_socket = UdpSocket::bind((LOCAL_IP, TELLO_VIDEO_STREAM_PORT)).await?;
 
-    let arc_tello = match Tello::new(
-        300,
-        "0.0.0.0".parse().unwrap(),
-        "192.168.10.1".parse().unwrap(),
-    ) {
-        Ok(tello) => Arc::new(Mutex::new(tello)),
-        Err(err) => {
-            error!("Tello: {:?}", err);
-            return;
-        }
-    };
-
-    if let Err(err) = arc_tello.lock().unwrap().connect() {
-        error!("Tello: {:?}", err);
-        return;
-    }
-
-    match arc_tello.lock().unwrap().send_cmd(Command::Command, true) {
-        Ok(res) => {
-            if res.unwrap() != CommandResult::Ok {
-                error!("Tello: Invalid command result");
-                return;
-            }
-        }
-        Err(err) => {
-            error!("Tello: {:?}", err);
-            return;
-        }
-    }
-
-    match arc_tello.lock().unwrap().send_cmd(Command::StreamOn, true) {
-        Ok(res) => {
-            if res.unwrap() != CommandResult::Ok {
-                error!("Tello: Failed to enable video stream");
-                return;
-            }
-        }
-        Err(err) => {
-            error!("Tello: {:?}", err);
-            return;
-        }
-    }
-
-    let arc_watchdog_server = match WatchdogServer::new(300, "127.0.0.1".parse().unwrap()) {
-        Ok(ws) => Arc::new(Mutex::new(ws)),
-        Err(err) => {
-            error!("Watchdog server: {:?}", err);
-            return;
-        }
-    };
-
-    info!("Watchdog server: Waiting connection from client...");
-    if let Err(err) = arc_watchdog_server.lock().unwrap().wait_for_connection() {
-        error!("Watchdog server: {:?}", err);
-        return;
-    }
-
-    // command thread
-    let tello_clone0 = Arc::clone(&arc_tello);
-    let ws_clone0 = Arc::clone(&arc_watchdog_server);
-    let t0 = thread::spawn(move || loop {
-        let mut c = None;
-
-        if let Ok(ref mut mutex) = ws_clone0.try_lock() {
-            println!("Watchdog server: {:?}", mutex.receive_cmd());
-            if let Ok(cmd) = mutex.receive_cmd() {
-                c = Command::from_str(cmd.as_str());
-            }
-        }
-
-        if let Some(cmd) = c {
-            if let Ok(ref mut mutex) = tello_clone0.try_lock() {
-                println!("{:?}", mutex.send_cmd(cmd, true));
-            } else {
-                error!("Tello: Instance was locked, Please retry to send command");
-            }
-        }
-
-        thread::sleep(Duration::from_millis(100));
-    });
-
-    // state thread
-    let tello_clone1 = Arc::clone(&arc_tello);
-    let ws_clone1 = Arc::clone(&arc_watchdog_server);
-    let t3 = thread::spawn(move || loop {
-        let mut s = None;
-        if let Ok(ref mut m_tello) = tello_clone1.try_lock() {
-            if let Ok(state) = m_tello.receive_state() {
-                s = state;
-            }
-        }
-
-        if let Some(state) = s {
-            if let Ok(ref mut m_ws) = ws_clone1.try_lock() {
-                m_ws.send_tello_state(state);
-            }
-        }
-
-        thread::sleep(Duration::from_millis(100));
-    });
-
-    // video stream thread
-    let tello_clone2 = Arc::clone(&arc_tello);
-    let ws_clone2 = Arc::clone(&arc_watchdog_server);
-    let t4 = thread::spawn(move || {
-        let mut buf = [0; 1460];
-
-        loop {
-            if let Ok(ref mut m_tello) = tello_clone2.try_lock() {
-                m_tello.receive_video_stream(&mut buf);
-            }
-
-            if let Ok(ref mut m_ws) = ws_clone2.try_lock() {
-                m_ws.send_video_stream(&buf);
-            }
-
-            thread::sleep(Duration::from_millis(400));
-        }
-    });
-
-    // command thread
-    let tello_clone3 = Arc::clone(&arc_tello);
-    let t5 = thread::spawn(move || {
-        let mut input = String::new();
-
-        loop {
-            stdin
-                .lock()
-                .read_line(&mut input)
-                .expect("Failed to read line from stdin");
-
-            if let Some(cmd) = Command::from_str(input.trim()) {
-                if let Ok(ref mut mutex) = tello_clone3.try_lock() {
-                    println!("{:?}", mutex.send_cmd(cmd, true));
-                } else {
-                    error!("Tello: Instance was locked, Please retry to send command");
+    info!("Server: Waiting connection from watchdog...");
+    let cmd_listener = TcpListener::bind(("0.0.0.0", 8989)).await?;
+    match cmd_listener.accept().await {
+        Ok((stream, addr)) => {
+            info!("Connected to: {:?}", addr);
+            tokio::spawn(async move {
+                if let Err(err) = listen_cmd(cmd_socket, stream).await {
+                    error!("Error in socket2: {:?}", err);
                 }
-            } else {
-                error!("Tello: Invalid command: \"{}\"", input.trim());
-            }
+            });
+        },
+        Err(err) => {
+            error!("Error: {:?}", err);
+        },
+    }
 
-            input.clear();
+    info!("Server: Waiting connection from watchdog...");
+    let state_listener = TcpListener::bind(("0.0.0.0", 8990)).await?;
+    match state_listener.accept().await {
+        Ok((stream, addr)) => {
+            info!("Connected to: {:?}", addr);
+            tokio::spawn(async move {
+                if let Err(err) = listen_state(state_socket, stream).await {
+                        error!("Error in socket1: {:?}", err);
+                }
+            });
+        },
+        Err(err) => {
+            error!("Error: {:?}", err);
+        },
+    }
+
+    tokio::spawn(async move {
+        if let Err(err) = listen_video(video_socket).await {
+            error!("Error in socket1: {:?}", err);
         }
     });
 
-    t0.join().unwrap();
-    t3.join().unwrap();
-    t4.join().unwrap();
-    t5.join().unwrap();
+    // メインスレッドが終了しないように待機
+    tokio::signal::ctrl_c().await?;
+
+    Ok(())
+}
+
+async fn listen_cmd(socket: UdpSocket, mut stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = vec![0; 1024];
+    //socket.set_broadcast(true)?;
+    socket.send_to("command".as_bytes(), ("192.168.10.1", 8889)).await?;
+    let sleep_duration = Duration::from_secs(1);
+    time::sleep(sleep_duration).await;
+    socket.send_to("streamon".as_bytes(), ("192.168.10.1", 8889)).await?;
+    loop {
+        match socket.recv_from(&mut buf).await {
+            Ok((size, peer)) => {
+                info!("Received {} bytes from {}: {:?}", size, peer, str::from_utf8(&buf[..size]));
+                stream.write_all(&buf[..size]).await;
+            },
+            Err(e) => {
+                error!("Error receiving data: {:?}", e);
+            },
+        }
+    }
+}
+
+async fn listen_state(socket: UdpSocket, mut stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = vec![0; 1024];
+    socket.send_to("".as_bytes(), ("192.168.10.1", 8889)).await?;
+    loop {
+        match socket.recv_from(&mut buf).await {
+            Ok((size, _peer)) => {
+                // info!("Received {} bytes from {}: {:?}", size, peer, str::from_utf8(&buf[..size]));
+                stream.write_all(&buf[..size]).await;
+            },
+            Err(e) => {
+                error!("Error receiving data: {:?}", e);
+            },
+        }
+    }
+}
+
+async fn listen_video(socket: UdpSocket) -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = vec![0; 1460];
+    socket.send_to("".as_bytes(), ("192.168.10.1", 62512)).await?;
+    loop {
+        match socket.recv_from(&mut buf).await {
+            Ok((size, _peer)) => {
+                // info!("Received {} bytes from {}: {:?}", size, peer, &buf[..size]);
+                socket.send_to(&buf[..size], ("127.0.0.1", 11112)).await?;
+            },
+            Err(_e) => {
+                // error!("Error receiving data: {:?}", e);
+            },
+        }
+    }
 }
