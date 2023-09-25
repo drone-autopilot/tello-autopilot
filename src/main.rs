@@ -1,7 +1,7 @@
-use std::{net::{IpAddr, Ipv4Addr}, env, time::Duration, io::{Error, ErrorKind}};
+use std::{net::{IpAddr, Ipv4Addr}, env, time::Duration};
 use log::{info, error};
-use tello_autopilot::state::State;
-use tokio::{net::{UdpSocket, TcpStream, TcpListener}, time::{self}, io::AsyncWriteExt};
+use tello_autopilot::{state::State, cmd::Command};
+use tokio::{net::{UdpSocket, TcpStream, TcpListener}, time::{self, timeout}, io::{AsyncWriteExt, AsyncReadExt}};
 use std::str;
 
 const LOCAL_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(0,0,0,0));
@@ -16,6 +16,8 @@ const TELLO_STREAM_ACCESS_PORT: u16 = 62512;
 const SERVER_CMD_PORT: u16 = 8989;
 const SERVER_STATE_PORT: u16 = 8990;
 const SERVER_VIDEO_STREAM_PORT: u16 = 11112;
+
+const TIMEOUT_MILLS: u64 = 100;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -70,22 +72,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/* TODO
+async fn send_cmd(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
+    let cmd_str = cmd.to_string();
+    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+    let _ = socket.send_to(cmd_str.as_bytes(), (TELLO_IP, TELLO_CMD_PORT));
+    Ok(())
+}
+*/
+
 async fn listen_cmd(socket: UdpSocket, mut stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0; 1024];
-    //socket.set_broadcast(true)?;
+    socket.send_to("".as_bytes(), (TELLO_IP, TELLO_CMD_PORT)).await?;
+
     socket.send_to("command".as_bytes(), (TELLO_IP, TELLO_CMD_PORT)).await?;
     let sleep_duration = Duration::from_secs(1);
     time::sleep(sleep_duration).await;
     socket.send_to("streamon".as_bytes(), (TELLO_IP, TELLO_CMD_PORT)).await?;
+
     loop {
-        match socket.recv_from(&mut buf).await {
-            Ok((size, peer)) => {
-                info!("Received {} bytes from {}: {:?}", size, peer, str::from_utf8(&buf[..size]));
-                let _ = stream.write_all(&buf[..size]).await;
-            },
-            Err(e) => {
-                error!("Error receiving data: {:?}", e);
-            },
+        let receive_task1 = socket.recv_from(&mut buf);
+        let timeout1 = timeout(Duration::from_millis(TIMEOUT_MILLS), receive_task1);
+        match timeout1.await {
+            Ok(result) => {
+                match result { Ok((size, peer)) => {
+                    info!("Received {} bytes from {}: {:?}", size, peer, str::from_utf8(&buf[..size]));
+                    let send_task = stream.write_all(&buf[..size]);
+                    let _ = timeout(Duration::from_millis(TIMEOUT_MILLS), send_task).await;
+                },
+                Err(e) => {
+                    error!("Error receiving data: {:?}", e);
+                },}
+            }
+            Err(_) => {}
+        }
+
+        let receive_task2 = stream.read(&mut buf);
+        let timeout2 = timeout(Duration::from_millis(TIMEOUT_MILLS), receive_task2);
+        match timeout2.await {
+            Ok(result) => {
+                match result { Ok(size) => {
+                    if let Ok(data) = str::from_utf8(&buf[..size]) {
+                        info!("Received {} bytes : {:?}", size, data);
+                        if let Some(cmd) = Command::from_str(data) {
+                            let _ = socket.send_to(cmd.to_string().as_bytes(), (TELLO_IP, TELLO_CMD_PORT)).await;
+                        } else {
+                            let send_task = stream.write_all("Invalid command".as_bytes());
+                            let _ = timeout(Duration::from_millis(TIMEOUT_MILLS), send_task).await;
+                        }
+                    }
+                },
+                Err(_e) => {
+                    // error!("Error receiving data: {:?}", e);
+                },}
+            }
+            Err(_) => {}
         }
     }
 }
@@ -119,7 +160,7 @@ async fn listen_video(socket: UdpSocket) -> Result<(), Box<dyn std::error::Error
         match socket.recv_from(&mut buf).await {
             Ok((size, _peer)) => {
                 // info!("Received {} bytes from {}: {:?}", size, peer, &buf[..size]);
-                socket.send_to(&buf[..size], (WATCHDOG_IP, SERVER_VIDEO_STREAM_PORT)).await?;
+                let _ = socket.send_to(&buf[..size], (WATCHDOG_IP, SERVER_VIDEO_STREAM_PORT)).await;
             },
             Err(_e) => {
                 // error!("Error receiving data: {:?}", e);
