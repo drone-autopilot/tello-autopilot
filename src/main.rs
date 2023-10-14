@@ -17,6 +17,8 @@ const SERVER_CMD_PORT: u16 = 8989;
 const SERVER_STATE_PORT: u16 = 8990;
 const SERVER_VIDEO_STREAM_PORT: u16 = 11112;
 
+const PILOT_VIDEO_STREAM_PORT: u16 = 11113;
+
 const TIMEOUT_MILLS: u64 = 100;
 
 #[tokio::main]
@@ -28,6 +30,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_socket = UdpSocket::bind((LOCAL_IP, TELLO_STATE_PORT)).await?;
     let video_socket = UdpSocket::bind((LOCAL_IP, TELLO_VIDEO_STREAM_PORT)).await?;
 
+    let send_only_socket = UdpSocket::bind("0.0.0.0:0").await?;
+
+    // コマンド関連の監視
     info!("Server: Waiting connection from watchdog...");
     let cmd_listener = TcpListener::bind((LOCAL_IP, SERVER_CMD_PORT)).await?;
     match cmd_listener.accept().await {
@@ -44,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     }
 
+    // ステータスの受信
     info!("Server: Waiting connection from watchdog...");
     let state_listener = TcpListener::bind((LOCAL_IP, SERVER_STATE_PORT)).await?;
     match state_listener.accept().await {
@@ -60,10 +66,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     }
 
+    // ビデオストリームの監視
     tokio::spawn(async move {
         if let Err(err) = listen_video(video_socket).await {
             error!("Error in socket1: {:?}", err);
         }
+    });
+
+    // 標準入力の監視
+    tokio::spawn(async {
+        listen_stdin(send_only_socket).await;
     });
 
     // メインスレッドが終了しないように待機
@@ -71,15 +83,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-/* TODO
-async fn send_cmd(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
-    let cmd_str = cmd.to_string();
-    let socket = UdpSocket::bind("0.0.0.0:0").await?;
-    let _ = socket.send_to(cmd_str.as_bytes(), (TELLO_IP, TELLO_CMD_PORT));
-    Ok(())
-}
-*/
 
 async fn listen_cmd(socket: UdpSocket, mut stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0; 1024];
@@ -161,10 +164,31 @@ async fn listen_video(socket: UdpSocket) -> Result<(), Box<dyn std::error::Error
             Ok((size, _peer)) => {
                 // info!("Received {} bytes from {}: {:?}", size, peer, &buf[..size]);
                 let _ = socket.send_to(&buf[..size], (WATCHDOG_IP, SERVER_VIDEO_STREAM_PORT)).await;
+                // 追加送信(自動制御用)
+                let _ = socket.send_to(&buf[..size], (WATCHDOG_IP, PILOT_VIDEO_STREAM_PORT)).await;
             },
             Err(_e) => {
                 // error!("Error receiving data: {:?}", e);
             },
+        }
+    }
+}
+
+async fn listen_stdin(socket: UdpSocket) {
+    let stdin = async_std::io::stdin();
+    let mut line = String::new();
+
+    loop {
+        if let Ok(_) = stdin.read_line(&mut line).await {
+            let str_cmd = line.trim();
+            info!("Console typed: {}", str_cmd);
+            if let Some(cmd) = Command::from_str(str_cmd) {
+                let cmd_str = cmd.to_string();
+                let _ = socket.send_to(cmd_str.as_bytes(), (TELLO_IP, TELLO_CMD_PORT));
+            } else {
+                error!("Invalid command.");
+            }
+            line.clear();
         }
     }
 }
