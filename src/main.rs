@@ -1,17 +1,15 @@
 use log::{error, info};
-use std::{
-    env,
-    net::{IpAddr, Ipv4Addr},
-};
+use std::env;
 use tello_autopilot::{cmd::Command, state::State};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, UdpSocket},
 };
 
-const LOCAL_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-const TELLO_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 168, 10, 1));
-const WATCHDOG_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+const LOCAL_IP: &'static str = "0.0.0.0";
+const TELLO_IP: &'static str = "192.168.10.1";
+//const TELLO_IP: &'static str = "127.0.0.1"; // for debugging
+const WATCHDOG_IP: &'static str = "127.0.0.1";
 
 const TELLO_CMD_PORT: u16 = 8889;
 const TELLO_STATE_PORT: u16 = 8890;
@@ -31,32 +29,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::spawn(async move {
         if let Err(e) =
-            listen_and_send_cmd((LOCAL_IP, SERVER_STATE_PORT), (TELLO_IP, TELLO_CMD_PORT)).await
+            listen_and_send_cmd((LOCAL_IP, SERVER_CMD_PORT), (TELLO_IP, TELLO_CMD_PORT)).await
         {
             error!("Error in listen command thread: {:?}", e);
         }
     });
 
     tokio::spawn(async move {
-        if let Err(e) = listen_stdin(("127.0.0.1", SERVER_STATE_PORT)).await {
+        if let Err(e) = listen_stdin(("127.0.0.1", SERVER_CMD_PORT)).await {
             error!("Error in listen stdin thread: {:?}", e);
         }
     });
 
-    tokio::spawn(async move {
-        if let Err(e) = listen_and_stream_video(
-            (LOCAL_IP, TELLO_VIDEO_STREAM_PORT),
-            (TELLO_IP, TELLO_STREAM_ACCESS_PORT),
-            &[
-                (WATCHDOG_IP, SERVER_VIDEO_STREAM_PORT),
-                (WATCHDOG_IP, PILOT_VIDEO_STREAM_PORT),
-            ],
-        )
-        .await
-        {
-            error!("Error in listen command thread: {:?}", e);
-        }
-    });
+    // tokio::spawn(async move {
+    //     if let Err(e) = listen_and_stream_video(
+    //         (LOCAL_IP, TELLO_VIDEO_STREAM_PORT),
+    //         (TELLO_IP, TELLO_STREAM_ACCESS_PORT),
+    //         &[
+    //             (WATCHDOG_IP, SERVER_VIDEO_STREAM_PORT),
+    //             (WATCHDOG_IP, PILOT_VIDEO_STREAM_PORT),
+    //         ],
+    //     )
+    //     .await
+    //     {
+    //         error!("Error in listen command thread: {:?}", e);
+    //     }
+    // });
 
     // メインスレッドが終了しないように待機
     tokio::signal::ctrl_c().await?;
@@ -64,14 +62,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn listen_and_send_cmd<A: tokio::net::ToSocketAddrs + Copy>(
+async fn listen_and_send_cmd<A: tokio::net::ToSocketAddrs + Copy + Send + 'static>(
     listen_target: A,
     dst_target: A,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(listen_target).await?;
-
-    info!("Connecting to dest target...");
-    //let dst_socket = UdpSocket::bind(dst_target).await?;
 
     // multi clients
     loop {
@@ -82,6 +77,7 @@ async fn listen_and_send_cmd<A: tokio::net::ToSocketAddrs + Copy>(
         };
 
         info!("Connected from {}", addr);
+
         tokio::spawn(async move {
             // receive cmd and send to dest target (is drone)
             let mut buf = vec![0; 1024];
@@ -100,10 +96,15 @@ async fn listen_and_send_cmd<A: tokio::net::ToSocketAddrs + Copy>(
                             Some(cmd) => {
                                 info!("Receive command from client ({}): {:?}", addr, cmd);
 
-                                // TODO: send cmd to dst_socket
+                                let dst_socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+                                dst_socket
+                                    .send_to(cmd.to_string().as_bytes(), dst_target)
+                                    .await
+                                    .unwrap();
                                 stream.write_all("ok".as_bytes()).await.unwrap();
                             }
                             None => {
+                                error!("Invalid command: \"{}\"", s);
                                 stream.write_all("error".as_bytes()).await.unwrap();
                             }
                         }
