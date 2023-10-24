@@ -1,15 +1,12 @@
 use log::{error, info};
-use std::str;
 use std::{
     env,
     net::{IpAddr, Ipv4Addr},
-    time::Duration,
 };
 use tello_autopilot::{cmd::Command, state::State};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, UdpSocket},
-    time::{self, timeout},
 };
 
 const LOCAL_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
@@ -27,63 +24,38 @@ const SERVER_VIDEO_STREAM_PORT: u16 = 11112;
 
 const PILOT_VIDEO_STREAM_PORT: u16 = 11113;
 
-const TIMEOUT_MILLS: u64 = 100;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env::set_var("RUST_LOG", "info");
     env_logger::init();
 
-    let cmd_socket = UdpSocket::bind((LOCAL_IP, TELLO_CMD_PORT)).await?;
-    let state_socket = UdpSocket::bind((LOCAL_IP, TELLO_STATE_PORT)).await?;
-    let video_socket = UdpSocket::bind((LOCAL_IP, TELLO_VIDEO_STREAM_PORT)).await?;
-
-    let send_only_socket = UdpSocket::bind("0.0.0.0:0").await?;
-
-    // コマンド関連の監視
-    info!("Server: Waiting connection from watchdog...");
-    let cmd_listener = TcpListener::bind((LOCAL_IP, SERVER_CMD_PORT)).await?;
-    match cmd_listener.accept().await {
-        Ok((stream, addr)) => {
-            info!("Connected to: {:?}", addr);
-            tokio::spawn(async move {
-                if let Err(err) = listen_cmd(cmd_socket, stream).await {
-                    error!("Error in socket2: {:?}", err);
-                }
-            });
-        }
-        Err(err) => {
-            error!("Error: {:?}", err);
-        }
-    }
-
-    // ステータスの受信
-    info!("Server: Waiting connection from watchdog...");
-    let state_listener = TcpListener::bind((LOCAL_IP, SERVER_STATE_PORT)).await?;
-    match state_listener.accept().await {
-        Ok((stream, addr)) => {
-            info!("Connected to: {:?}", addr);
-            tokio::spawn(async move {
-                if let Err(err) = listen_state(state_socket, stream).await {
-                    error!("Error in socket1: {:?}", err);
-                }
-            });
-        }
-        Err(err) => {
-            error!("Error: {:?}", err);
-        }
-    }
-
-    // ビデオストリームの監視
     tokio::spawn(async move {
-        if let Err(err) = listen_video(video_socket).await {
-            error!("Error in socket1: {:?}", err);
+        if let Err(e) =
+            listen_and_send_cmd((LOCAL_IP, SERVER_STATE_PORT), (TELLO_IP, TELLO_CMD_PORT)).await
+        {
+            error!("Error in listen command thread: {:?}", e);
         }
     });
 
-    // 標準入力の監視
-    tokio::spawn(async {
-        listen_stdin(send_only_socket).await;
+    tokio::spawn(async move {
+        if let Err(e) = listen_stdin(("127.0.0.1", SERVER_STATE_PORT)).await {
+            error!("Error in listen stdin thread: {:?}", e);
+        }
+    });
+
+    tokio::spawn(async move {
+        if let Err(e) = listen_and_stream_video(
+            (LOCAL_IP, TELLO_VIDEO_STREAM_PORT),
+            (TELLO_IP, TELLO_STREAM_ACCESS_PORT),
+            &[
+                (WATCHDOG_IP, SERVER_VIDEO_STREAM_PORT),
+                (WATCHDOG_IP, PILOT_VIDEO_STREAM_PORT),
+            ],
+        )
+        .await
+        {
+            error!("Error in listen command thread: {:?}", e);
+        }
     });
 
     // メインスレッドが終了しないように待機
@@ -92,148 +64,134 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn listen_cmd(
-    socket: UdpSocket,
-    mut stream: TcpStream,
+async fn listen_and_send_cmd<A: tokio::net::ToSocketAddrs + Copy>(
+    listen_target: A,
+    dst_target: A,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0; 1024];
-    socket
-        .send_to("".as_bytes(), (TELLO_IP, TELLO_CMD_PORT))
-        .await?;
+    let listener = TcpListener::bind(listen_target).await?;
 
-    socket
-        .send_to("command".as_bytes(), (TELLO_IP, TELLO_CMD_PORT))
-        .await?;
-    let sleep_duration = Duration::from_secs(1);
-    time::sleep(sleep_duration).await;
-    socket
-        .send_to("streamon".as_bytes(), (TELLO_IP, TELLO_CMD_PORT))
-        .await?;
+    info!("Connecting to dest target...");
+    //let dst_socket = UdpSocket::bind(dst_target).await?;
 
+    // multi clients
     loop {
-        let receive_task1 = socket.recv_from(&mut buf);
-        let timeout1 = timeout(Duration::from_millis(TIMEOUT_MILLS), receive_task1);
-        match timeout1.await? {
-            Ok((size, peer)) => {
-                info!(
-                    "Received {} bytes from {}: {:?}",
-                    size,
-                    peer,
-                    str::from_utf8(&buf[..size])
-                );
-                let send_task = stream.write_all(&buf[..size]);
-                let _ = timeout(Duration::from_millis(TIMEOUT_MILLS), send_task).await;
-            }
-            Err(e) => {
-                error!("Error receiving data: {:?}", e);
-            }
-        }
+        info!("Waiting connection...");
+        let (mut stream, addr) = match listener.accept().await {
+            Ok(r) => r,
+            Err(e) => return Err(Box::new(e)),
+        };
 
-        let receive_task2 = stream.read(&mut buf);
-        let timeout2 = timeout(Duration::from_millis(TIMEOUT_MILLS), receive_task2);
-        match timeout2.await? {
-            Ok(size) => {
-                if let Ok(data) = str::from_utf8(&buf[..size]) {
-                    info!("Received {} bytes : {:?}", size, data);
-                    if let Some(cmd) = Command::from_str(data) {
-                        let _ = socket
-                            .send_to(cmd.to_string().as_bytes(), (TELLO_IP, TELLO_CMD_PORT))
-                            .await;
-                    } else {
-                        let send_task = stream.write_all("Invalid command".as_bytes());
-                        let _ = timeout(Duration::from_millis(TIMEOUT_MILLS), send_task).await;
+        info!("Connected from {}", addr);
+        tokio::spawn(async move {
+            // receive cmd and send to dest target (is drone)
+            let mut buf = vec![0; 1024];
+            loop {
+                //info!("Waiting message from client");
+                match stream.read(&mut buf).await {
+                    Ok(size) => {
+                        if size == 0 {
+                            break;
+                        }
+
+                        let data = &buf[..size];
+                        let s = String::from_utf8_lossy(data);
+
+                        match Command::from_str(&s) {
+                            Some(cmd) => {
+                                info!("Receive command from client ({}): {:?}", addr, cmd);
+
+                                // TODO: send cmd to dst_socket
+                                stream.write_all("ok".as_bytes()).await.unwrap();
+                            }
+                            None => {
+                                stream.write_all("error".as_bytes()).await.unwrap();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error while reading from client ({}): {:?}", addr, e);
+                        break;
                     }
                 }
             }
-            Err(_e) => {
-                // error!("Error receiving data: {:?}", e);
-            }
-        }
+            info!("End of connection with client ({})", addr);
+        });
     }
 }
 
-async fn listen_state(
-    socket: UdpSocket,
-    mut stream: TcpStream,
+async fn listen_stdin<A: tokio::net::ToSocketAddrs>(
+    target: A,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0; 1024];
-    socket
-        .send_to("".as_bytes(), (TELLO_IP, TELLO_CMD_PORT))
-        .await?;
-    loop {
-        match socket.recv_from(&mut buf).await {
-            Ok((size, _peer)) => {
-                // info!("Received {} bytes from {}: {:?}", size, peer, str::from_utf8(&buf[..size]));
-                match str::from_utf8(&buf[..size]) {
-                    Ok(str) => {
-                        let state = State::from_str(str);
-                        let _ = stream
-                            .write_all(serde_json::to_string(&state).unwrap().as_bytes())
-                            .await;
-                    }
-                    Err(_) => todo!(),
-                }
-            }
-            Err(e) => {
-                error!("Error receiving data: {:?}", e);
-            }
-        }
-    }
-}
-
-async fn listen_video(socket: UdpSocket) -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = vec![0; 1460];
-    socket
-        .send_to("".as_bytes(), (TELLO_IP, TELLO_STREAM_ACCESS_PORT))
-        .await?;
-    loop {
-        match socket.recv_from(&mut buf).await {
-            Ok((size, _peer)) => {
-                // info!("Received {} bytes from {}: {:?}", size, peer, &buf[..size]);
-                let _ = socket
-                    .send_to(&buf[..size], (WATCHDOG_IP, SERVER_VIDEO_STREAM_PORT))
-                    .await;
-                // 追加送信(自動制御用)
-                let _ = socket
-                    .send_to(&buf[..size], (WATCHDOG_IP, PILOT_VIDEO_STREAM_PORT))
-                    .await;
-            }
-            Err(_e) => {
-                // error!("Error receiving data: {:?}", e);
-            }
-        }
-    }
-}
-
-async fn listen_stdin(socket: UdpSocket) {
     let stdin = async_std::io::stdin();
     let mut line = String::new();
+
+    let mut stream = TcpStream::connect(target).await?;
 
     loop {
         if stdin.read_line(&mut line).await.is_err() {
             continue;
         }
 
-        let str_cmd = line.trim();
-        info!("Console typed: {}", str_cmd);
+        stream.write_all(line.trim().as_bytes()).await?;
+        line.clear();
+    }
+}
 
-        // parse command
-        let cmd = match Command::from_str(str_cmd) {
-            Some(cmd) => cmd,
-            None => {
-                error!("Invalid command.");
-                continue;
+// TODO
+//async fn listen_and_send_state<A: tokio::net::ToSocketAddrs + Copy>(
+//     listen_target: A,
+//     src_target: A,
+// ) -> Result<(), Box<dyn std::error::Error>> {
+//     let listener = TcpListener::bind(listen_target).await?;
+
+//     info!("Connecting to src target...");
+//     let src_socket = UdpSocket::bind(src_target).await?;
+//     let mut buf = vec![0; 1024];
+
+//     // multi clients
+//     loop {
+//         info!("Waiting connection...");
+//         let (mut stream, addr) = match listener.accept().await {
+//             Ok(r) => r,
+//             Err(e) => return Err(Box::new(e)),
+//         };
+
+//         info!("Connected from {}", addr);
+//         tokio::spawn(async move {
+//             loop {
+//                 match src_socket.recv_from(&mut buf).await {
+//                     Ok((size, _)) => {
+//                         // ignore errors
+//                         stream.write_all("ok".as_bytes()).await.unwrap();
+//                     }
+//                     Err(e) => {
+//                         error!("Error while listening video: {:?}", e);
+//                     }
+//                 }
+//             }
+//         });
+//     }
+// }
+
+async fn listen_and_stream_video<A: tokio::net::ToSocketAddrs>(
+    listen_target: A,
+    src_target: A,
+    dst_target: &[A],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let socket = UdpSocket::bind(listen_target).await?;
+    let mut buf = vec![0; 1460];
+    socket.send_to("".as_bytes(), src_target).await?;
+
+    loop {
+        match socket.recv_from(&mut buf).await {
+            Ok((size, _)) => {
+                for target in dst_target {
+                    // ignore errors
+                    let _ = socket.send_to(&buf[..size], target).await;
+                }
             }
-        };
-
-        // send command to drone
-        match socket
-            .send_to(cmd.to_string().as_bytes(), (TELLO_IP, TELLO_CMD_PORT))
-            .await
-        {
-            Ok(_) => (),
             Err(e) => {
-                error!("Error: {:?}", e);
+                error!("Error while listening video: {:?}", e);
             }
         }
     }
