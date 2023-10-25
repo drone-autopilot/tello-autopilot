@@ -90,56 +90,56 @@ async fn listen_and_send_cmd<A: tokio::net::ToSocketAddrs + Copy + Send + 'stati
             // receive cmd and send to dest target (is drone)
             let mut buf = vec![0; 1024];
             loop {
-                //info!("Waiting message from client");
-                match stream.read(&mut buf).await {
-                    Ok(size) => {
-                        if size == 0 {
-                            break;
-                        }
-
-                        let data = &buf[..size];
-                        let s = String::from_utf8_lossy(data);
-
-                        match Command::from_str(&s) {
-                            Some(cmd) => {
-                                info!("Receive command from client ({}): {:?}", addr, cmd);
-
-                                let dst_socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
-                                if let Err(e) = dst_socket
-                                    .send_to(cmd.to_string().as_bytes(), dst_target)
-                                    .await
-                                {
-                                    error!("Failed to send cmd to target: {:?}", e);
-                                    stream.write_all("error".as_bytes()).await.unwrap();
-                                    continue;
-                                }
-
-                                // wait response
-                                // TODO: timeout
-                                let size = match dst_socket.recv_from(&mut buf).await {
-                                    Ok((size, _)) => size,
-                                    Err(e) => {
-                                        error!("Failed to receive response from target: {:?}", e);
-                                        stream.write_all("error".as_bytes()).await.unwrap();
-                                        continue;
-                                    }
-                                };
-
-                                let s = String::from_utf8_lossy(&buf[..size]);
-                                info!("Receive response from target: {:?}", s);
-                                stream.write_all(s.as_bytes()).await.unwrap();
-                            }
-                            None => {
-                                error!("Invalid command: \"{}\"", s);
-                                stream.write_all("error".as_bytes()).await.unwrap();
-                            }
-                        }
-                    }
+                let size = match stream.read(&mut buf).await {
+                    Ok(size) => size,
                     Err(e) => {
                         error!("Error while reading from client ({}): {:?}", addr, e);
                         break;
                     }
+                };
+
+                if size == 0 {
+                    break;
                 }
+
+                let data = &buf[..size];
+                let s = String::from_utf8_lossy(data);
+
+                let cmd = match Command::from_str(&s) {
+                    Some(cmd) => cmd,
+                    None => {
+                        error!("Invalid command: \"{}\"", s);
+                        stream.write_all("error".as_bytes()).await.unwrap();
+                        continue;
+                    }
+                };
+
+                info!("Receive command from client ({}): {:?}", addr, cmd);
+
+                let dst_socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+                if let Err(e) = dst_socket
+                    .send_to(cmd.to_string().as_bytes(), dst_target)
+                    .await
+                {
+                    error!("Failed to send cmd to target: {:?}", e);
+                    stream.write_all("error".as_bytes()).await.unwrap();
+                    continue;
+                }
+
+                // wait response
+                // TODO: timeout
+                let size = match dst_socket.recv_from(&mut buf).await {
+                    Ok((size, _)) => size,
+                    Err(e) => {
+                        error!("Failed to receive response from target: {:?}", e);
+                        stream.write_all("error".as_bytes()).await.unwrap();
+                        continue;
+                    }
+                };
+
+                let s = String::from_utf8_lossy(&buf[..size]);
+                info!("Receive response from target: {:?}", s);
+                stream.write_all(s.as_bytes()).await.unwrap();
             }
             info!("End of connection with client ({})", addr);
         });
