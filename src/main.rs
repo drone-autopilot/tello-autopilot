@@ -7,8 +7,8 @@ use tokio::{
 };
 
 const LOCAL_IP: &'static str = "0.0.0.0";
-const TELLO_IP: &'static str = "192.168.10.1";
-//const TELLO_IP: &'static str = "127.0.0.1"; // for debugging
+//const TELLO_IP: &'static str = "192.168.10.1";
+const TELLO_IP: &'static str = "127.0.0.1"; // for debugging
 const WATCHDOG_IP: &'static str = "127.0.0.1";
 
 const TELLO_CMD_PORT: u16 = 8889;
@@ -105,11 +105,29 @@ async fn listen_and_send_cmd<A: tokio::net::ToSocketAddrs + Copy + Send + 'stati
                                 info!("Receive command from client ({}): {:?}", addr, cmd);
 
                                 let dst_socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
-                                dst_socket
+                                if let Err(e) = dst_socket
                                     .send_to(cmd.to_string().as_bytes(), dst_target)
                                     .await
-                                    .unwrap();
-                                stream.write_all("ok".as_bytes()).await.unwrap();
+                                {
+                                    error!("Failed to send cmd to target: {:?}", e);
+                                    stream.write_all("error".as_bytes()).await.unwrap();
+                                    continue;
+                                }
+
+                                // wait response
+                                // TODO: timeout
+                                let size = match dst_socket.recv_from(&mut buf).await {
+                                    Ok((size, _)) => size,
+                                    Err(e) => {
+                                        error!("Failed to receive response from target: {:?}", e);
+                                        stream.write_all("error".as_bytes()).await.unwrap();
+                                        continue;
+                                    }
+                                };
+
+                                let s = String::from_utf8_lossy(&buf[..size]);
+                                info!("Receive response from target: {:?}", s);
+                                stream.write_all(s.as_bytes()).await.unwrap();
                             }
                             None => {
                                 error!("Invalid command: \"{}\"", s);
