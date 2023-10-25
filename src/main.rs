@@ -41,6 +41,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    tokio::spawn(async move {
+        if let Err(e) =
+            shoot_cmd_infinitely(("127.0.0.1", SERVER_CMD_PORT), Command::Command, 10000).await
+        {
+            error!("Error in shoot command thread: {:?}", e);
+        }
+    });
+
     // tokio::spawn(async move {
     //     if let Err(e) = listen_and_stream_video(
     //         (LOCAL_IP, TELLO_VIDEO_STREAM_PORT),
@@ -135,6 +143,20 @@ async fn listen_stdin<A: tokio::net::ToSocketAddrs>(
 
         stream.write_all(line.trim().as_bytes()).await?;
         line.clear();
+    }
+}
+
+async fn shoot_cmd_infinitely<A: tokio::net::ToSocketAddrs>(
+    target: A,
+    cmd: Command,
+    dur_ms: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stream = TcpStream::connect(target).await?;
+    let cmd_str = cmd.to_string();
+
+    loop {
+        stream.write_all(cmd_str.as_bytes()).await?;
+        tokio::time::sleep(tokio::time::Duration::from_millis(dur_ms as u64)).await;
     }
 }
 
