@@ -1,15 +1,14 @@
 use log::{error, info};
-use std::{env, time::Duration};
+use std::{env, sync::Arc, time::Duration};
 use tello_autopilot::{cmd::Command, state::State};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, UdpSocket},
+    sync::Mutex,
 };
 
 const LOCAL_IP: &'static str = "0.0.0.0";
 const TELLO_IP: &'static str = "192.168.10.1";
-//const TELLO_IP: &'static str = "127.0.0.1"; // for debugging
-const WATCHDOG_IP: &'static str = "127.0.0.1";
 
 const TELLO_CMD_PORT: u16 = 8889;
 const TELLO_STATE_PORT: u16 = 8890;
@@ -18,14 +17,19 @@ const TELLO_STREAM_ACCESS_PORT: u16 = 62512;
 
 const SERVER_CMD_PORT: u16 = 8989;
 const SERVER_STATE_PORT: u16 = 8990;
-const SERVER_VIDEO_STREAM_PORT: u16 = 11112;
 
-const PILOT_VIDEO_STREAM_PORT: u16 = 11113;
-
-const TIMEOUT_MS: u64 = 100;
+const TIMEOUT_MS: u64 = 500;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    async fn sleep() {
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIMEOUT_MS as u64)).await;
+    }
+
+    async fn send_cmd(cmd: Command) -> Result<(), Box<dyn std::error::Error>> {
+        shoot_cmd(("127.0.0.1", SERVER_CMD_PORT), cmd).await
+    }
+
     env::set_var("RUST_LOG", "info");
     env_logger::init();
 
@@ -37,34 +41,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    sleep().await;
+    send_cmd(Command::Command).await?;
+    send_cmd(Command::StreamOn).await?;
+
     tokio::spawn(async move {
         if let Err(e) = listen_stdin(("127.0.0.1", SERVER_CMD_PORT)).await {
             error!("Error in listen stdin thread: {:?}", e);
         }
     });
 
+    tokio::spawn(async move {
+        if let Err(e) =
+            shoot_cmd_infinitely(("127.0.0.1", SERVER_CMD_PORT), Command::Command, 10000).await
+        {
+            error!("Error in shoot command thread: {:?}", e);
+        }
+    });
+
+    sleep().await;
+
+    // TODO: not working
     // tokio::spawn(async move {
     //     if let Err(e) =
-    //         shoot_cmd_infinitely(("127.0.0.1", SERVER_CMD_PORT), Command::Command, 10000).await
+    //         listen_and_send_state((LOCAL_IP, SERVER_STATE_PORT), (TELLO_IP, TELLO_STATE_PORT)).await
     //     {
-    //         error!("Error in shoot command thread: {:?}", e);
+    //         error!("Error in listen state thread: {:?}", e);
     //     }
     // });
 
-    // tokio::spawn(async move {
-    //     if let Err(e) = listen_and_stream_video(
-    //         (LOCAL_IP, TELLO_VIDEO_STREAM_PORT),
-    //         (TELLO_IP, TELLO_STREAM_ACCESS_PORT),
-    //         &[
-    //             (WATCHDOG_IP, SERVER_VIDEO_STREAM_PORT),
-    //             (WATCHDOG_IP, PILOT_VIDEO_STREAM_PORT),
-    //         ],
-    //     )
-    //     .await
-    //     {
-    //         error!("Error in listen command thread: {:?}", e);
-    //     }
-    // });
+    tokio::spawn(async move {
+        if let Err(e) = listen_and_stream_video(
+            (LOCAL_IP, TELLO_VIDEO_STREAM_PORT),
+            (TELLO_IP, TELLO_STREAM_ACCESS_PORT),
+            &[
+                ("127.0.0.1", 11112), // watchdog
+                ("127.0.0.1", 11113), // detector
+            ],
+        )
+        .await
+        {
+            error!("Error in listen command thread: {:?}", e);
+        }
+    });
 
     // メインスレッドが終了しないように待機
     tokio::signal::ctrl_c().await?;
@@ -130,13 +149,13 @@ async fn listen_and_send_cmd<A: tokio::net::ToSocketAddrs + Copy + Send + 'stati
                 }
 
                 // wait response
+                // TODO: timed out by from watchdog
                 if tokio::time::timeout(Duration::from_millis(TIMEOUT_MS), async {
                     let size = match dst_socket.recv_from(&mut buf).await {
                         Ok((size, _)) => size,
                         Err(e) => {
                             error!("Failed to receive response from target: {:?}", e);
                             stream.write_all("error".as_bytes()).await.unwrap();
-                            //continue;
                             return;
                         }
                     };
@@ -174,6 +193,16 @@ async fn listen_stdin<A: tokio::net::ToSocketAddrs>(
     }
 }
 
+async fn shoot_cmd<A: tokio::net::ToSocketAddrs>(
+    target: A,
+    cmd: Command,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stream = TcpStream::connect(target).await?;
+    stream.write_all(cmd.to_string().as_bytes()).await?;
+
+    Ok(())
+}
+
 async fn shoot_cmd_infinitely<A: tokio::net::ToSocketAddrs>(
     target: A,
     cmd: Command,
@@ -188,41 +217,65 @@ async fn shoot_cmd_infinitely<A: tokio::net::ToSocketAddrs>(
     }
 }
 
-// TODO
-//async fn listen_and_send_state<A: tokio::net::ToSocketAddrs + Copy>(
-//     listen_target: A,
-//     src_target: A,
-// ) -> Result<(), Box<dyn std::error::Error>> {
-//     let listener = TcpListener::bind(listen_target).await?;
+async fn listen_and_send_state<A: tokio::net::ToSocketAddrs + Copy + Send + 'static>(
+    listen_target: A,
+    src_target: A,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind(listen_target).await?;
 
-//     info!("Connecting to src target...");
-//     let src_socket = UdpSocket::bind(src_target).await?;
-//     let mut buf = vec![0; 1024];
+    // UDPソケットをArcで包む
+    let src_socket = Arc::new(Mutex::new(UdpSocket::bind(src_target).await.unwrap()));
+    println!("{:?}", src_socket);
 
-//     // multi clients
-//     loop {
-//         info!("Waiting connection...");
-//         let (mut stream, addr) = match listener.accept().await {
-//             Ok(r) => r,
-//             Err(e) => return Err(Box::new(e)),
-//         };
+    // multi clients
+    loop {
+        info!("Waiting connection...");
+        let (mut stream, addr) = match listener.accept().await {
+            Ok(r) => r,
+            Err(e) => return Err(Box::new(e)),
+        };
 
-//         info!("Connected from {}", addr);
-//         tokio::spawn(async move {
-//             loop {
-//                 match src_socket.recv_from(&mut buf).await {
-//                     Ok((size, _)) => {
-//                         // ignore errors
-//                         stream.write_all("ok".as_bytes()).await.unwrap();
-//                     }
-//                     Err(e) => {
-//                         error!("Error while listening video: {:?}", e);
-//                     }
-//                 }
-//             }
-//         });
-//     }
-// }
+        info!("Connected from {}", addr);
+
+        // UDPソケットのクローンを作成
+        let src_socket_clone = src_socket.clone();
+
+        tokio::spawn(async move {
+            // receive cmd and send to dest target (is drone)
+            let mut buf = vec![0; 1024];
+
+            loop {
+                // UDPソケットへのアクセスをMutexで保護
+                let src_socket_lock = src_socket_clone.lock().await;
+
+                // wait response
+                if tokio::time::timeout(Duration::from_millis(TIMEOUT_MS), async {
+                    let size = match src_socket_lock.recv_from(&mut buf).await {
+                        Ok((size, _)) => size,
+                        Err(e) => {
+                            error!("Failed to receive response from target: {:?}", e);
+                            return;
+                        }
+                    };
+
+                    let s = String::from_utf8_lossy(&buf[..size]).to_string();
+                    let state = State::from_str(s.as_str());
+                    info!("Receive state from target: {:?}", state);
+                    stream
+                        .write_all(serde_json::to_string(&state).unwrap().as_bytes())
+                        .await
+                        .unwrap();
+                })
+                .await
+                .is_err()
+                {
+                    error!("Response timed out from target");
+                }
+            }
+            //info!("End of connection with client ({})", addr);
+        });
+    }
+}
 
 async fn listen_and_stream_video<A: tokio::net::ToSocketAddrs>(
     listen_target: A,
@@ -241,8 +294,8 @@ async fn listen_and_stream_video<A: tokio::net::ToSocketAddrs>(
                     let _ = socket.send_to(&buf[..size], target).await;
                 }
             }
-            Err(e) => {
-                error!("Error while listening video: {:?}", e);
+            Err(_e) => {
+                //error!("Error while listening video: {:?}", e);
             }
         }
     }
