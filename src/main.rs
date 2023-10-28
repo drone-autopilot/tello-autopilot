@@ -25,6 +25,7 @@ const LISTEN_STATE_ADDR: (&'static str, u16) = ("127.0.0.1", 8990);
 const TELLO_CMD_ADDR: (&'static str, u16) = ("192.168.10.1", 8889);
 const TELLO_STATE_ADDR: (&'static str, u16) = ("0.0.0.0", 8890);
 const TELLO_VIDEO_ADDR: (&'static str, u16) = ("0.0.0.0", 11111);
+const TELLO_VIDEO_DOORBELL_ADDR: (&'static str, u16) = ("192.168.10.1", 62512);
 
 const TIMEOUT_MS: u64 = 15000; // 15s
 
@@ -78,6 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     spawn(async move {
         if let Err(e) = listen_and_stream_video(
             TELLO_VIDEO_ADDR,
+            TELLO_VIDEO_DOORBELL_ADDR,
             &[
                 ("127.0.0.1", 11112), // watchdog
                 ("127.0.0.1", 11113), // detector
@@ -293,10 +295,13 @@ async fn listen_and_send_state<A: ToSocketAddrs + Copy + Send + 'static>(
 
 async fn listen_and_stream_video<A: ToSocketAddrs>(
     listen_target: A,
+    doorbell_target: A,
     dst_target: &[A],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let socket = UdpSocket::bind(listen_target).await?;
     let mut buf = vec![0; 1460];
+
+    socket.send_to(b"", doorbell_target).await?;
 
     loop {
         match socket.recv_from(&mut buf).await {
