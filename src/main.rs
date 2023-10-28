@@ -1,5 +1,5 @@
 use log::{error, info};
-use std::env;
+use std::{env, sync::Arc};
 use tello_autopilot::{cmd::Command, state::State};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -19,25 +19,15 @@ const TELLO_STATE_ADDR: Addr = ("0.0.0.0", 8890);
 const TELLO_VIDEO_ADDR: Addr = ("0.0.0.0", 11111);
 const TELLO_VIDEO_DOORBELL_ADDR: Addr = ("192.168.10.1", 62512);
 
-const TIMEOUT_MS: u64 = 15000; // 15s
 const RES_TIMEOUT_MS: u64 = 3000; // 3s
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    async fn sleep_5s() {
-        sleep(Duration::from_millis(5000)).await;
+    async fn send_cmd(cmd: Command) {
+        if let Err(e) = shoot_cmd(LISTEN_CMD_ADDR, &cmd).await {
+            error!("sned cmd: {:?}", e);
+        }
     }
-
-    // TODO: not working
-    // TODO: shoot_cmd -> shoot_cmd_infinitely -> listen_state
-    // NOTE: おそらくdst_sokcetをクライアントごとに再生成しているせい -> これを共通で扱いたい
-    // fn send_cmd(cmd: Command) {
-    //     spawn(async move {
-    //         if let Err(e) = shoot_cmd(LISTEN_CMD_ADDR, &cmd).await {
-    //             error!("sned cmd: {:?}", e);
-    //         }
-    //     });
-    // }
 
     env::set_var("RUST_LOG", "info");
     env_logger::init();
@@ -49,10 +39,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    sleep_5s().await;
-
-    //send_cmd(Command::Command);
-    //send_cmd(Command::StreamOn);
+    send_cmd(Command::Command).await;
+    send_cmd(Command::StreamOn).await;
 
     spawn(async move {
         if let Err(e) = listen_stdin(LISTEN_CMD_ADDR).await {
@@ -60,11 +48,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // spawn(async move {
-    //     if let Err(e) = shoot_cmd_infinitely(LISTEN_CMD_ADDR, &Command::Command, 4000).await {
-    //         error!("listen shoot cmd: {:?}", e);
-    //     }
-    // });
+    spawn(async move {
+        if let Err(e) = shoot_cmd_infinitely(LISTEN_CMD_ADDR, &Command::Command, 4000).await {
+            error!("listen shoot cmd: {:?}", e);
+        }
+    });
 
     // spawn(async move {
     //     if let Err(e) = listen_and_send_state(LISTEN_STATE_ADDR, TELLO_STATE_ADDR).await {
@@ -100,9 +88,12 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
     dst_target: A,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(listen_target).await?;
+    let dst_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
 
     // multi clients
     loop {
+        let dst_socket_clone = dst_socket.clone();
+
         info!("listen cmd: Waiting connection...");
         let (mut stream, addr) = match listener.accept().await {
             Ok(r) => r,
@@ -110,7 +101,6 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
         };
 
         let mut buf = vec![0; 1024];
-        let dst_socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
         info!("listen cmd: Connected from {}", addr);
 
         spawn(async move {
@@ -147,7 +137,7 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
                     addr, cmd
                 );
 
-                if let Err(e) = dst_socket
+                if let Err(e) = dst_socket_clone
                     .send_to(cmd.to_string().as_bytes(), dst_target)
                     .await
                 {
@@ -158,7 +148,7 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
 
                 // wait response
                 if timeout(Duration::from_millis(RES_TIMEOUT_MS), async {
-                    let size = match dst_socket.recv_from(&mut buf).await {
+                    let size = match dst_socket_clone.recv_from(&mut buf).await {
                         Ok((size, _)) => size,
                         Err(e) => {
                             error!(
@@ -206,37 +196,37 @@ async fn listen_stdin<A: ToSocketAddrs + Copy>(
     }
 }
 
-// async fn shoot_cmd<A: ToSocketAddrs>(
-//     target: A,
-//     cmd: &Command,
-// ) -> Result<(), Box<dyn std::error::Error>> {
-//     let mut buf = vec![0; 128];
-//     let mut stream = TcpStream::connect(target).await?;
-//     stream.write_all(cmd.to_string().as_bytes()).await?;
-//     stream.read_buf(&mut buf).await?;
+async fn shoot_cmd<A: ToSocketAddrs>(
+    target: A,
+    cmd: &Command,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = vec![0; 128];
+    let mut stream = TcpStream::connect(target).await?;
+    stream.write_all(cmd.to_string().as_bytes()).await?;
+    stream.read_buf(&mut buf).await?;
 
-//     Ok(())
-// }
+    Ok(())
+}
 
-// async fn shoot_cmd_infinitely<A: ToSocketAddrs + Copy>(
-//     target: A,
-//     cmd: &Command,
-//     dur_ms: u64,
-// ) -> Result<(), Box<dyn std::error::Error>> {
-//     if dur_ms < RES_TIMEOUT_MS {
-//         return Err(format!("dur_ms is shorter than {}ms", RES_TIMEOUT_MS).into());
-//     }
+async fn shoot_cmd_infinitely<A: ToSocketAddrs + Copy>(
+    target: A,
+    cmd: &Command,
+    dur_ms: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if dur_ms < RES_TIMEOUT_MS {
+        return Err(format!("dur_ms is shorter than {}ms", RES_TIMEOUT_MS).into());
+    }
 
-//     let mut stream = TcpStream::connect(target).await?;
-//     let mut buf = vec![0; 128];
-//     let s = cmd.to_string();
+    let mut stream = TcpStream::connect(target).await?;
+    let mut buf = vec![0; 128];
+    let s = cmd.to_string();
 
-//     loop {
-//         stream.write_all(s.as_bytes()).await?;
-//         stream.read_buf(&mut buf).await?;
-//         sleep(Duration::from_millis(dur_ms)).await;
-//     }
-// }
+    loop {
+        stream.write_all(s.as_bytes()).await?;
+        stream.read_buf(&mut buf).await?;
+        sleep_ms(dur_ms).await;
+    }
+}
 
 // async fn listen_and_send_state<A: ToSocketAddrs + Copy + Send + 'static>(
 //     tcp_listen_target: A,
@@ -289,4 +279,8 @@ async fn listen_and_stream_video<A: ToSocketAddrs>(
             }
         }
     }
+}
+
+async fn sleep_ms(ms: u64) {
+    sleep(Duration::from_millis(ms)).await;
 }
