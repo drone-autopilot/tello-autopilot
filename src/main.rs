@@ -18,7 +18,7 @@ const TELLO_STREAM_ACCESS_PORT: u16 = 62512;
 const SERVER_CMD_PORT: u16 = 8989;
 const SERVER_STATE_PORT: u16 = 8990;
 
-const TIMEOUT_MS: u64 = 500;
+const TIMEOUT_MS: u64 = 100;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,38 +37,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) =
             listen_and_send_cmd((LOCAL_IP, SERVER_CMD_PORT), (TELLO_IP, TELLO_CMD_PORT)).await
         {
-            error!("Error in listen command thread: {:?}", e);
+            error!("listen cmd: {:?}", e);
         }
     });
 
-    sleep().await;
+    //sleep().await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
     send_cmd(Command::Command).await?;
     send_cmd(Command::StreamOn).await?;
 
     tokio::spawn(async move {
         if let Err(e) = listen_stdin(("127.0.0.1", SERVER_CMD_PORT)).await {
-            error!("Error in listen stdin thread: {:?}", e);
+            error!("listen stdin: {:?}", e);
         }
     });
 
-    tokio::spawn(async move {
-        if let Err(e) =
-            shoot_cmd_infinitely(("127.0.0.1", SERVER_CMD_PORT), Command::Command, 10000).await
-        {
-            error!("Error in shoot command thread: {:?}", e);
-        }
-    });
+    // tokio::spawn(async move {
+    //     if let Err(e) =
+    //         shoot_cmd_infinitely(("127.0.0.1", SERVER_CMD_PORT), Command::Command, 10000).await
+    //     {
+    //         error!("listen shoot cmd: {:?}", e);
+    //     }
+    // });
 
     sleep().await;
 
-    // TODO: not working
-    // tokio::spawn(async move {
-    //     if let Err(e) =
-    //         listen_and_send_state((LOCAL_IP, SERVER_STATE_PORT), (TELLO_IP, TELLO_STATE_PORT)).await
-    //     {
-    //         error!("Error in listen state thread: {:?}", e);
-    //     }
-    // });
+    tokio::spawn(async move {
+        if let Err(e) =
+            listen_and_send_state((LOCAL_IP, SERVER_STATE_PORT), (TELLO_IP, TELLO_STATE_PORT)).await
+        {
+            error!("Error in listen state thread: {:?}", e);
+        }
+    });
 
     tokio::spawn(async move {
         if let Err(e) = listen_and_stream_video(
@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await
         {
-            error!("Error in listen command thread: {:?}", e);
+            error!("listen video: {:?}", e);
         }
     });
 
@@ -99,24 +99,26 @@ async fn listen_and_send_cmd<A: tokio::net::ToSocketAddrs + Copy + Send + 'stati
 
     // multi clients
     loop {
-        info!("Waiting connection...");
+        info!("listen cmd: Waiting connection...");
         let (mut stream, addr) = match listener.accept().await {
             Ok(r) => r,
             Err(e) => return Err(Box::new(e)),
         };
 
         let dst_socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
-
-        info!("Connected from {}", addr);
+        let mut buf = vec![0; 1024];
+        info!("listen cmd: Connected from {}", addr);
 
         tokio::spawn(async move {
             // receive cmd and send to dest target (is drone)
-            let mut buf = vec![0; 1024];
             loop {
                 let size = match stream.read(&mut buf).await {
                     Ok(size) => size,
                     Err(e) => {
-                        error!("Error while reading from client ({}): {:?}", addr, e);
+                        error!(
+                            "listen cmd: Error while reading from client ({}): {:?}",
+                            addr, e
+                        );
                         break;
                     }
                 };
@@ -137,40 +139,38 @@ async fn listen_and_send_cmd<A: tokio::net::ToSocketAddrs + Copy + Send + 'stati
                     }
                 };
 
-                info!("Receive command from client ({}): {:?}", addr, cmd);
+                info!(
+                    "listen cmd: Receive command from client ({}): {:?}",
+                    addr, cmd
+                );
 
                 if let Err(e) = dst_socket
                     .send_to(cmd.to_string().as_bytes(), dst_target)
                     .await
                 {
-                    error!("Failed to send cmd to target: {:?}", e);
+                    error!("listen cmd: Failed to send cmd to target: {:?}", e);
                     stream.write_all("error".as_bytes()).await.unwrap();
                     continue;
                 }
 
                 // wait response
-                // TODO: timed out by from watchdog
-                if tokio::time::timeout(Duration::from_millis(TIMEOUT_MS), async {
-                    let size = match dst_socket.recv_from(&mut buf).await {
-                        Ok((size, _)) => size,
-                        Err(e) => {
-                            error!("Failed to receive response from target: {:?}", e);
-                            stream.write_all("error".as_bytes()).await.unwrap();
-                            return;
-                        }
-                    };
+                let size = match dst_socket.recv_from(&mut buf).await {
+                    Ok((size, _)) => size,
+                    Err(e) => {
+                        error!(
+                            "listen cmd: Failed to receive response from target: {:?}",
+                            e
+                        );
+                        stream.write_all("error".as_bytes()).await.unwrap();
+                        return;
+                    }
+                };
 
-                    let s = String::from_utf8_lossy(&buf[..size]);
-                    info!("Receive response from target: {:?}", s);
-                    stream.write_all(s.as_bytes()).await.unwrap();
-                })
-                .await
-                .is_err()
-                {
-                    error!("Response timeouted from target");
-                }
+                let s = String::from_utf8_lossy(&buf[..size]);
+                info!("listen cmd: Receive response from target: {:?}", s);
+                stream.write_all(s.as_bytes()).await.unwrap();
             }
-            info!("End of connection with client ({})", addr);
+            info!("listen cmd: End of connection with client ({})", addr);
         });
     }
 }
@@ -221,59 +221,79 @@ async fn listen_and_send_state<A: tokio::net::ToSocketAddrs + Copy + Send + 'sta
     listen_target: A,
     src_target: A,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind(listen_target).await?;
+    // let listener = TcpListener::bind(listen_target).await?;
 
-    // UDPソケットをArcで包む
-    let src_socket = Arc::new(Mutex::new(UdpSocket::bind(src_target).await.unwrap()));
-    println!("{:?}", src_socket);
+    // // multi clients
+    // loop {
+    //     info!("listen state: Waiting connection...");
+    //     let (mut stream, addr) = match listener.accept().await {
+    //         Ok(r) => r,
+    //         Err(e) => return Err(Box::new(e)),
+    //     };
 
-    // multi clients
+    //     let src_socket = UdpSocket::bind(src_target).await?;
+
+    //     info!("listen state: Connected from {}", addr);
+
+    //     tokio::spawn(async move {
+    //         let mut buf = vec![0; 1024];
+
+    //         loop {
+    //             // wait response
+    //             if tokio::time::timeout(Duration::from_millis(TIMEOUT_MS), async {
+    //                 let size = match src_socket.recv_from(&mut buf).await {
+    //                     Ok((size, _)) => size,
+    //                     Err(e) => {
+    //                         error!(
+    //                             "listen state: Failed to receive response from target: {:?}",
+    //                             e
+    //                         );
+    //                         return;
+    //                     }
+    //                 };
+
+    //                 let s = String::from_utf8_lossy(&buf[..size]).to_string();
+    //                 let state = State::from_str(s.as_str());
+    //                 info!("listen state: Receive state from target: {:?}", state);
+    //                 stream
+    //                     .write_all(serde_json::to_string(&state).unwrap().as_bytes())
+    //                     .await
+    //                     .unwrap();
+    //             })
+    //             .await
+    //             .is_err()
+    //             {
+    //                 error!("listen state: Response timed out from target");
+    //             }
+    //         }
+    //         //info!("listen state: End of connection with client ({})", addr);
+    //     });
+    // }
+    let src_socket = UdpSocket::bind(src_target).await?;
+    let mut buf = vec![0; 1024];
+
     loop {
-        info!("Waiting connection...");
-        let (mut stream, addr) = match listener.accept().await {
-            Ok(r) => r,
-            Err(e) => return Err(Box::new(e)),
-        };
-
-        info!("Connected from {}", addr);
-
-        // UDPソケットのクローンを作成
-        let src_socket_clone = src_socket.clone();
-
-        tokio::spawn(async move {
-            // receive cmd and send to dest target (is drone)
-            let mut buf = vec![0; 1024];
-
-            loop {
-                // UDPソケットへのアクセスをMutexで保護
-                let src_socket_lock = src_socket_clone.lock().await;
-
-                // wait response
-                if tokio::time::timeout(Duration::from_millis(TIMEOUT_MS), async {
-                    let size = match src_socket_lock.recv_from(&mut buf).await {
-                        Ok((size, _)) => size,
-                        Err(e) => {
-                            error!("Failed to receive response from target: {:?}", e);
-                            return;
-                        }
-                    };
-
-                    let s = String::from_utf8_lossy(&buf[..size]).to_string();
-                    let state = State::from_str(s.as_str());
-                    info!("Receive state from target: {:?}", state);
-                    stream
-                        .write_all(serde_json::to_string(&state).unwrap().as_bytes())
-                        .await
-                        .unwrap();
-                })
-                .await
-                .is_err()
-                {
-                    error!("Response timed out from target");
+        if tokio::time::timeout(Duration::from_millis(TIMEOUT_MS), async {
+            let size = match src_socket.recv_from(&mut buf).await {
+                Ok((size, _)) => size,
+                Err(e) => {
+                    error!(
+                        "listen state: Failed to receive response from target: {:?}",
+                        e
+                    );
+                    return;
                 }
-            }
-            //info!("End of connection with client ({})", addr);
-        });
+            };
+
+            let s = String::from_utf8_lossy(&buf[..size]).to_string();
+            let state = State::from_str(s.as_str());
+            info!("listen state: Receive state from target: {:?}", state);
+        })
+        .await
+        .is_err()
+        {
+            error!("listen state: Response timed out from target");
+        }
     }
 }
 
