@@ -54,15 +54,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // spawn(async move {
-    //     if let Err(e) = listen_and_send_state(LISTEN_STATE_ADDR, TELLO_STATE_ADDR).await {
-    //         error!("Error in listen state thread: {:?}", e);
-    //     }
-    // });
+    // state
+    spawn(async move {
+        if let Err(e) =
+            listen_and_send_state(LISTEN_STATE_ADDR, TELLO_STATE_ADDR, TELLO_CMD_ADDR).await
+        {
+            error!("Error in listen state thread: {:?}", e);
+        }
+    });
 
     // video
-    //send_cmd(Command::StreamOn);
-
     spawn(async move {
         if let Err(e) = listen_and_stream_video(
             TELLO_VIDEO_ADDR,
@@ -127,7 +128,13 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
                     Some(cmd) => cmd,
                     None => {
                         error!("Invalid command: \"{}\"", s);
-                        stream.write_all("error".as_bytes()).await.unwrap();
+                        if let Err(e) = stream.write_all("error".as_bytes()).await {
+                            error!(
+                                "listen cmd: Failed to send data to client ({}): {:?}",
+                                addr, e
+                            );
+                            return;
+                        }
                         continue;
                     }
                 };
@@ -142,7 +149,13 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
                     .await
                 {
                     error!("listen cmd: Failed to send cmd to target: {:?}", e);
-                    stream.write_all("error".as_bytes()).await.unwrap();
+                    if let Err(e) = stream.write_all("error".as_bytes()).await {
+                        error!(
+                            "listen cmd: Failed to send data to client ({}): {:?}",
+                            addr, e
+                        );
+                        return;
+                    }
                     continue;
                 }
 
@@ -155,20 +168,37 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
                                 "listen cmd: Failed to receive response from target: {:?}",
                                 e
                             );
-                            stream.write_all("error".as_bytes()).await.unwrap();
+                            if let Err(e) = stream.write_all("error".as_bytes()).await {
+                                error!(
+                                    "listen cmd: Failed to send data to client ({}): {:?}",
+                                    addr, e
+                                );
+                            }
                             return;
                         }
                     };
 
                     let s = String::from_utf8_lossy(&buf[..size]);
                     info!("listen cmd: Receive response from target: {:?}", s);
-                    stream.write_all(s.as_bytes()).await.unwrap();
+                    if let Err(e) = stream.write_all(s.as_bytes()).await {
+                        error!(
+                            "listen cmd: Failed to send data to client ({}): {:?}",
+                            addr, e
+                        );
+                        return;
+                    }
                 })
                 .await
                 .is_err()
                 {
-                    error!("Timed out");
-                    stream.write_all("error".as_bytes()).await.unwrap();
+                    error!("listen cmd: Timed out waiting response");
+                    if let Err(e) = stream.write_all("error".as_bytes()).await {
+                        error!(
+                            "listen cmd: Failed to send data to client ({}): {:?}",
+                            addr, e
+                        );
+                        return;
+                    }
                 }
             }
             info!("listen cmd: End of connection with client ({})", addr);
@@ -228,33 +258,65 @@ async fn shoot_cmd_infinitely<A: ToSocketAddrs + Copy>(
     }
 }
 
-// async fn listen_and_send_state<A: ToSocketAddrs + Copy + Send + 'static>(
-//     tcp_listen_target: A,
-//     udp_listen_target: A,
-// ) -> Result<(), Box<dyn std::error::Error>> {
-//     //let listener = TcpListener::bind(listen_target).await?;
-//     let src_server_socket = UdpSocket::bind(udp_listen_target).await?;
+async fn listen_and_send_state<A: ToSocketAddrs + Copy + Send + 'static>(
+    tcp_listen_target: A,
+    udp_src_target: A,
+    doorbell_target: A,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind(tcp_listen_target).await?;
+    let src_socket = Arc::new(UdpSocket::bind(udp_src_target).await.unwrap());
+    src_socket.send_to(b"", doorbell_target).await?;
 
-//     let mut buf = vec![0; 1024];
+    // multi clients
+    loop {
+        let src_socket_clone = src_socket.clone();
 
-//     loop {
-//         info!("listen state: Waiting...");
-//         let size = match src_server_socket.recv_from(&mut buf).await {
-//             Ok((size, _)) => size,
-//             Err(e) => {
-//                 error!(
-//                     "listen state: Failed to receive response from target: {:?}",
-//                     e
-//                 );
-//                 continue;
-//             }
-//         };
+        info!("listen state: Waiting connection...");
+        let (mut stream, addr) = match listener.accept().await {
+            Ok(r) => r,
+            Err(e) => return Err(Box::new(e)),
+        };
 
-//         let s = String::from_utf8_lossy(&buf[..size]).to_string();
-//         let state = State::from_str(s.as_str());
-//         info!("listen state: Receive state from target: {:?}", state);
-//     }
-// }
+        let mut buf = vec![0; 1024];
+        info!("listen state: Connected from {}", addr);
+
+        spawn(async move {
+            loop {
+                if timeout(Duration::from_millis(RES_TIMEOUT_MS), async {
+                    let size = match src_socket_clone.recv_from(&mut buf).await {
+                        Ok((size, _)) => size,
+                        Err(e) => {
+                            error!("listen state: Failed to receive data from target {:?}", e);
+                            return;
+                        }
+                    };
+
+                    let s = String::from_utf8_lossy(&buf[..size]);
+                    let state = match State::from_str(&s) {
+                        Some(s) => s,
+                        None => return,
+                    };
+
+                    //info!("listen state: Receive state from target: {:?}", state);
+                    let json = serde_json::to_string(&state).unwrap();
+                    if let Err(e) = stream.write_all(json.as_bytes()).await {
+                        error!(
+                            "listen state: Failed to send data to client ({}): {:?}",
+                            addr, e
+                        );
+                        return;
+                    }
+                })
+                .await
+                .is_err()
+                {
+                    error!("listen state: Timed out waiting receive data");
+                }
+            }
+            //info!("listen state: End of conenction with client ({})", addr);
+        });
+    }
+}
 
 async fn listen_and_stream_video<A: ToSocketAddrs>(
     listen_target: A,
