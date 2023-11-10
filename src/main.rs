@@ -211,7 +211,6 @@ async fn listen_stdin<A: ToSocketAddrs + Copy>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let stdin = async_std::io::stdin();
     let mut line = String::new();
-    let mut buf = vec![0; 128];
 
     let mut stream = TcpStream::connect(target).await?;
 
@@ -220,8 +219,8 @@ async fn listen_stdin<A: ToSocketAddrs + Copy>(
             continue;
         }
 
-        stream.write_all(line.trim().as_bytes()).await?;
-        stream.read_buf(&mut buf).await?;
+        let cmd = line.trim();
+        stream.write_all(cmd.as_bytes()).await?;
         line.clear();
     }
 }
