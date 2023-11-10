@@ -81,10 +81,10 @@ pub enum Command {
     },
     Speed(usize),
     Rc {
-        a: usize,
-        b: usize,
-        c: usize,
-        d: usize,
+        a: isize,
+        b: isize,
+        c: isize,
+        d: isize,
     },
     Wifi {
         ssid: String,
@@ -255,6 +255,30 @@ impl Command {
             Some(&"wifi?") => Some(Command::ReadWifi),
             Some(&"sdk?") => Some(Command::ReadSdk),
             Some(&"sn?") => Some(Command::ReadSerialNumber),
+            Some(&"rc") => if parts.len() == 5 {
+                let a = parts[1].parse::<isize>();
+                let b = parts[2].parse::<isize>();
+                let c = parts[3].parse::<isize>();
+                let d = parts[4].parse::<isize>();
+
+                if a.is_err() || b.is_err() || c.is_err() || d.is_err() {
+                    return None;
+                }
+
+                let a = a.unwrap();
+                let b = b.unwrap();
+                let c = c.unwrap();
+                let d = d.unwrap();
+
+                if !(a > -100 && a < 100) || !(b > -100 && b < 100) || !(c > -100 && c < 100) || !(d > -100 && d < 100) {
+                    return None;
+                }
+
+                Some(Command::Rc { a, b, c, d })
+            }
+            else {
+                None
+            }
             _ => None,
         }
     }
@@ -415,11 +439,17 @@ impl Display for Command {
                 format!("speed {}", value)
             }
             Self::Rc {
-                a: _,
-                b: _,
-                c: _,
-                d: _,
-            } => unimplemented!(), // unknown command
+                a,
+                b,
+                c,
+                d,
+            } => {
+                if !(*a > -100 && *a < 100) || !(*b > -100 && *b < 100) || !(*c > -100 && *c < 100) || !(*d > -100 && *d < 100) {
+                    panic!("Not allow argument : {:?}, must be -99 ~ 99", self);
+                }
+
+                format!("rc {} {} {} {}", a, b, c, d)
+            },
             Self::Wifi { ssid, pass } => format!("wifi {} {}", ssid, pass),
             Self::MissionpadOn => "mon".to_string(),
             Self::MissionpadOff => "moff".to_string(),
