@@ -19,7 +19,7 @@ const TELLO_STATE_ADDR: Addr = ("0.0.0.0", 8890);
 const TELLO_VIDEO_ADDR: Addr = ("0.0.0.0", 11111);
 const TELLO_VIDEO_DOORBELL_ADDR: Addr = ("192.168.10.1", 62512);
 
-const RES_TIMEOUT_MS: u64 = 3000; // 3s
+const RES_TIMEOUT_MS: u64 = 5000; // 5s
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -48,11 +48,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    spawn(async move {
-        if let Err(e) = shoot_cmd_infinitely(LISTEN_CMD_ADDR, &Command::Command, 4000).await {
-            error!("listen shoot cmd: {:?}", e);
-        }
-    });
+    // spawn(async move {
+    //     if let Err(e) = shoot_cmd_infinitely(LISTEN_CMD_ADDR, &Command::Command, 4000).await {
+    //         error!("listen shoot cmd: {:?}", e);
+    //     }
+    // });
 
     // state
     spawn(async move {
