@@ -106,6 +106,8 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
 
         spawn(async move {
             loop {
+                buf.clear();
+
                 let size = match stream.read(&mut buf).await {
                     Ok(size) => size,
                     Err(e) => {
@@ -237,25 +239,25 @@ async fn shoot_cmd<A: ToSocketAddrs>(
     Ok(())
 }
 
-async fn shoot_cmd_infinitely<A: ToSocketAddrs + Copy>(
-    target: A,
-    cmd: &Command,
-    dur_ms: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if dur_ms < RES_TIMEOUT_MS {
-        return Err(format!("dur_ms is shorter than {}ms", RES_TIMEOUT_MS).into());
-    }
+// async fn shoot_cmd_infinitely<A: ToSocketAddrs + Copy>(
+//     target: A,
+//     cmd: &Command,
+//     dur_ms: u64,
+// ) -> Result<(), Box<dyn std::error::Error>> {
+//     if dur_ms < RES_TIMEOUT_MS {
+//         return Err(format!("dur_ms is shorter than {}ms", RES_TIMEOUT_MS).into());
+//     }
 
-    let mut stream = TcpStream::connect(target).await?;
-    let mut buf = vec![0; 128];
-    let s = cmd.to_string();
+//     let mut stream = TcpStream::connect(target).await?;
+//     let mut buf = vec![0; 128];
+//     let s = cmd.to_string();
 
-    loop {
-        stream.write_all(s.as_bytes()).await?;
-        stream.read_buf(&mut buf).await?;
-        sleep_ms(dur_ms).await;
-    }
-}
+//     loop {
+//         stream.write_all(s.as_bytes()).await?;
+//         stream.read_buf(&mut buf).await?;
+//         sleep_ms(dur_ms).await;
+//     }
+// }
 
 async fn listen_and_send_state<A: ToSocketAddrs + Copy + Send + 'static>(
     tcp_listen_target: A,
