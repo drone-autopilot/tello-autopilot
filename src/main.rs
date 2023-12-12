@@ -6,7 +6,7 @@ use tokio::{
     net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
     signal::ctrl_c,
     spawn,
-    time::{sleep, timeout, Duration},
+    time::{sleep, timeout, Duration}, sync::Mutex,
 };
 
 type Addr = (&'static str, u16);
@@ -91,6 +91,8 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
     let listener = TcpListener::bind(listen_target).await?;
     let dst_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
 
+    let sending_cmd_to_drone = Arc::new(Mutex::new(false));
+
     // multi clients
     loop {
         let dst_socket_clone = dst_socket.clone();
@@ -101,12 +103,13 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
             Err(e) => return Err(Box::new(e)),
         };
 
-        let mut buf = vec![0; 1024];
         info!("listen cmd: Connected from {}", addr);
 
+        let sending_cmd_to_drone_clone = sending_cmd_to_drone.clone();
         spawn(async move {
             loop {
-                buf.clear();
+                let mut buf = vec![0; 1024];
+                let mut res_buf = vec![0; 1024];
 
                 let size = match stream.read(&mut buf).await {
                     Ok(size) => size,
@@ -123,9 +126,7 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
                     continue;
                 }
 
-                let data = &buf[..size];
-                let s = String::from_utf8_lossy(data);
-
+                let s = String::from_utf8_lossy(&buf[..size]);
                 let cmd = match Command::from_str(&s) {
                     Some(cmd) => cmd,
                     None => {
@@ -146,54 +147,84 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
                     addr, cmd
                 );
 
-                if let Err(e) = dst_socket_clone
+                if let Ok(mut flag) = sending_cmd_to_drone_clone.try_lock() {
+                    // not sending
+                    if !*flag {
+                        *flag = true;
+                    }
+
+                    // sending -> return error
+                    else if let Err(e) = stream.write_all("error".as_bytes()).await {
+                        error!(
+                            "listen cmd: Failed to send data to client ({}): {:?}",
+                            addr, e
+                        );
+                        return;
+                    }
+
+                    if let Err(e) = dst_socket_clone
                     .send_to(cmd.to_string().as_bytes(), dst_target)
                     .await
-                {
-                    error!("listen cmd: Failed to send cmd to target: {:?}", e);
-                    if let Err(e) = stream.write_all("error".as_bytes()).await {
-                        error!(
-                            "listen cmd: Failed to send data to client ({}): {:?}",
-                            addr, e
-                        );
-                        return;
-                    }
-                    continue;
-                }
-
-                // wait response
-                if timeout(Duration::from_millis(RES_TIMEOUT_MS), async {
-                    let size = match dst_socket_clone.recv_from(&mut buf).await {
-                        Ok((size, _)) => size,
-                        Err(e) => {
+                    {
+                        *flag = false;
+                        error!("listen cmd: Failed to send cmd to target: {:?}", e);
+                        if let Err(e) = stream.write_all("error".as_bytes()).await {
                             error!(
-                                "listen cmd: Failed to receive response from target: {:?}",
-                                e
+                                "listen cmd: Failed to send data to client ({}): {:?}",
+                                addr, e
                             );
-                            if let Err(e) = stream.write_all("error".as_bytes()).await {
-                                error!(
-                                    "listen cmd: Failed to send data to client ({}): {:?}",
-                                    addr, e
-                                );
-                            }
                             return;
                         }
-                    };
-
-                    let s = String::from_utf8_lossy(&buf[..size]);
-                    info!("listen cmd: Receive response from target: {:?}", s);
-                    if let Err(e) = stream.write_all(s.as_bytes()).await {
-                        error!(
-                            "listen cmd: Failed to send data to client ({}): {:?}",
-                            addr, e
-                        );
-                        return;
+                        continue;
                     }
-                })
-                .await
-                .is_err()
-                {
-                    error!("listen cmd: Timed out waiting response");
+
+                    // wait response
+                    if timeout(Duration::from_millis(RES_TIMEOUT_MS), async {
+                        let size = match dst_socket_clone.recv_from(&mut res_buf).await {
+                            Ok((size, _)) => size,
+                            Err(e) => {
+                                error!(
+                                    "listen cmd: Failed to receive response from target: {:?}",
+                                    e
+                                );
+                                if let Err(e) = stream.write_all("error".as_bytes()).await {
+                                    error!(
+                                        "listen cmd: Failed to send data to client ({}): {:?}",
+                                        addr, e
+                                    );
+                                }
+                                return;
+                            }
+                        };
+
+                        let s = String::from_utf8_lossy(&res_buf[..size]);
+                        info!("listen cmd: Receive response from target: {:?}", s);
+                        if let Err(e) = stream.write_all(s.as_bytes()).await {
+                            error!(
+                                "listen cmd: Failed to send data to client ({}): {:?}",
+                                addr, e
+                            );
+                            return;
+                        }
+                    })
+                    .await
+                    .is_err()
+                    {
+                        *flag = false;
+                        error!("listen cmd: Timed out waiting response");
+                        if let Err(e) = stream.write_all("error".as_bytes()).await {
+                            error!(
+                                "listen cmd: Failed to send data to client ({}): {:?}",
+                                addr, e
+                            );
+                            return;
+                        }
+                    }
+
+                    *flag = false;
+                }
+                // flag is locked -> return error
+                else {
                     if let Err(e) = stream.write_all("error".as_bytes()).await {
                         error!(
                             "listen cmd: Failed to send data to client ({}): {:?}",
