@@ -1,5 +1,5 @@
 use log::{error, info};
-use std::{env, sync::Arc};
+use std::{collections::HashSet, env, sync::Arc};
 use tello_autopilot::{cmd::Command, state::State};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -19,7 +19,7 @@ const TELLO_STATE_ADDR: Addr = ("0.0.0.0", 8890);
 const TELLO_VIDEO_ADDR: Addr = ("0.0.0.0", 11111);
 const TELLO_VIDEO_DOORBELL_ADDR: Addr = ("192.168.10.1", 62512);
 
-const RES_TIMEOUT_MS: u64 = 5000; // 5s
+const RES_TIMEOUT_MS: u64 = 1000; // 1s
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -89,7 +89,7 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
     dst_target: A,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(listen_target).await?;
-    let dst_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
+    let dst_socket: Arc<UdpSocket> = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
 
     // multi clients
     loop {
@@ -122,82 +122,89 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
                 }
 
                 let data = &buf[..size];
-                let s = String::from_utf8_lossy(data);
+                let s = String::from_utf8_lossy(data)
+                    .replace("\n", "")
+                    .replace("\r", "");
+                let cmd_strs: Vec<&str> = s.split('A').collect();
+                let cmd_strs_hash_set: HashSet<&str> = cmd_strs.into_iter().collect();
 
-                let cmd = match Command::from_str(&s) {
-                    Some(cmd) => cmd,
-                    None => {
-                        error!("Invalid command: \"{}\"", s);
-                        if let Err(e) = stream.write_all("error".as_bytes()).await {
-                            error!(
-                                "listen cmd: Failed to send data to client ({}): {:?}",
-                                addr, e
-                            );
-                            return;
-                        }
+                for cmd_str in cmd_strs_hash_set {
+                    if cmd_str.len() == 0 {
                         continue;
                     }
-                };
 
-                info!(
-                    "listen cmd: Receive command from client ({}): {:?}",
-                    addr, cmd
-                );
-
-                if let Err(e) = dst_socket_clone
-                    .send_to(cmd.to_string().as_bytes(), dst_target)
-                    .await
-                {
-                    error!("listen cmd: Failed to send cmd to target: {:?}", e);
-                    if let Err(e) = stream.write_all("error".as_bytes()).await {
-                        error!(
-                            "listen cmd: Failed to send data to client ({}): {:?}",
-                            addr, e
-                        );
-                        return;
-                    }
-                    continue;
-                }
-
-                // wait response
-                if timeout(Duration::from_millis(RES_TIMEOUT_MS), async {
-                    let size = match dst_socket_clone.recv_from(&mut buf).await {
-                        Ok((size, _)) => size,
-                        Err(e) => {
-                            error!(
-                                "listen cmd: Failed to receive response from target: {:?}",
-                                e
-                            );
+                    let cmd = match Command::from_str(cmd_str) {
+                        Some(cmd) => cmd,
+                        None => {
+                            error!("Invalid command: \"{}\"", cmd_str);
                             if let Err(e) = stream.write_all("error".as_bytes()).await {
                                 error!(
                                     "listen cmd: Failed to send data to client ({}): {:?}",
                                     addr, e
                                 );
                             }
-                            return;
+                            continue;
                         }
                     };
 
-                    let s = String::from_utf8_lossy(&buf[..size]);
-                    info!("listen cmd: Receive response from target: {:?}", s);
-                    if let Err(e) = stream.write_all(s.as_bytes()).await {
-                        error!(
-                            "listen cmd: Failed to send data to client ({}): {:?}",
-                            addr, e
-                        );
-                        return;
+                    info!(
+                        "listen cmd: Receive command from client ({}): {:?}",
+                        addr, cmd
+                    );
+
+                    if let Err(e) = dst_socket_clone
+                        .send_to(cmd.to_string().as_bytes(), dst_target)
+                        .await
+                    {
+                        error!("listen cmd: Failed to send cmd to target: {:?}", e);
+                        if let Err(e) = stream.write_all("error".as_bytes()).await {
+                            error!(
+                                "listen cmd: Failed to send data to client ({}): {:?}",
+                                addr, e
+                            );
+                        }
+                        continue;
                     }
-                })
-                .await
-                .is_err()
-                {
-                    error!("listen cmd: Timed out waiting response");
-                    if let Err(e) = stream.write_all("error".as_bytes()).await {
-                        error!(
-                            "listen cmd: Failed to send data to client ({}): {:?}",
-                            addr, e
-                        );
-                        return;
+
+                    // wait response
+                    if timeout(Duration::from_millis(RES_TIMEOUT_MS), async {
+                        let size = match dst_socket_clone.recv_from(&mut buf).await {
+                            Ok((size, _)) => size,
+                            Err(e) => {
+                                error!(
+                                    "listen cmd: Failed to receive response from target: {:?}",
+                                    e
+                                );
+                                if let Err(e) = stream.write_all("error".as_bytes()).await {
+                                    error!(
+                                        "listen cmd: Failed to send data to client ({}): {:?}",
+                                        addr, e
+                                    );
+                                }
+                                return;
+                            }
+                        };
+
+                        let s = String::from_utf8_lossy(&buf[..size]);
+                        info!("listen cmd: Receive response from target: {:?}", s);
+                        if let Err(e) = stream.write_all(s.as_bytes()).await {
+                            error!(
+                                "listen cmd: Failed to send data to client ({}): {:?}",
+                                addr, e
+                            );
+                            return;
+                        }
+                    })
+                    .await
+                    .is_err()
+                    {
+                        error!("listen cmd: Timed out waiting response");
+                        if let Err(e) = stream.write_all("error".as_bytes()).await {
+                            error!(
+                                "listen cmd: Failed to send data to client ({}): {:?}",
+                                addr, e
+                            );
+                        }
                     }
                 }
             }
@@ -219,6 +226,7 @@ async fn listen_stdin<A: ToSocketAddrs + Copy>(
             continue;
         }
 
+        line.push('A');
         let cmd = line.trim();
         stream.write_all(cmd.as_bytes()).await?;
         line.clear();
