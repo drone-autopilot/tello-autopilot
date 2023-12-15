@@ -19,7 +19,7 @@ const TELLO_STATE_ADDR: Addr = ("0.0.0.0", 8890);
 const TELLO_VIDEO_ADDR: Addr = ("0.0.0.0", 11111);
 const TELLO_VIDEO_DOORBELL_ADDR: Addr = ("192.168.10.1", 62512);
 
-const RES_TIMEOUT_MS: u64 = 1000; // 1s
+const RES_TIMEOUT_MS: u64 = 5000; // 5s
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -125,6 +125,7 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
                 let s = String::from_utf8_lossy(data)
                     .replace("\n", "")
                     .replace("\r", "");
+                // println!("{:?}", s);
                 let cmd_strs: Vec<&str> = s.split('A').collect();
                 let cmd_strs_hash_set: HashSet<&str> = cmd_strs.into_iter().collect();
 
@@ -164,6 +165,16 @@ async fn listen_and_send_cmd<A: ToSocketAddrs + Copy + Send + 'static>(
                             );
                         }
                         continue;
+                    }
+
+                    // rc command
+                    match cmd {
+                        Command::Rc { a, b, c, d } => {
+                            // wait 0.5s
+                            sleep_ms(500).await;
+                            continue;
+                        },
+                        _ => ()
                     }
 
                     // wait response
